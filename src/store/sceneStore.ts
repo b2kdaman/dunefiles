@@ -8,10 +8,17 @@ export type FileEntry = {
   size: number;
 };
 
-// History entry includes path and entries
+// History entry includes path, entries, and camera/scene state
 export type HistoryEntry = {
   path: string;
   entries: FileEntry[];
+  cameraPosition?: { x: number; y: number; z: number };
+  cameraTarget?: { x: number; y: number; z: number };
+  objectStates?: Array<{
+    id: string;
+    position: { x: number; y: number; z: number };
+    rotation: { x: number; y: number; z: number; w: number };
+  }>;
 };
 
 type SceneState = {
@@ -24,7 +31,15 @@ type SceneState = {
   canGoBack: boolean;
 
   // Actions
-  navigateTo: (path: string, entries: FileEntry[]) => void;
+  navigateTo: (path: string, entries: FileEntry[], state?: {
+    cameraPosition?: { x: number; y: number; z: number };
+    cameraTarget?: { x: number; y: number; z: number };
+    objectStates?: Array<{
+      id: string;
+      position: { x: number; y: number; z: number };
+      rotation: { x: number; y: number; z: number; w: number };
+    }>;
+  }) => void;
   goBack: () => HistoryEntry | null;
   clearHistory: () => void;
 };
@@ -35,12 +50,18 @@ export const useSceneStore = create<SceneState>((set, get) => ({
   history: [],
   canGoBack: false,
 
-  navigateTo: (path, entries) => {
+  navigateTo: (path, entries, state) => {
     const { currentPath, currentEntries } = get();
 
     // Only push to history if we have a current path (not initial load)
     const newHistory = currentPath
-      ? [...get().history, { path: currentPath, entries: currentEntries }]
+      ? [...get().history, {
+          path: currentPath,
+          entries: currentEntries,
+          cameraPosition: state?.cameraPosition,
+          cameraTarget: state?.cameraTarget,
+          objectStates: state?.objectStates,
+        }]
       : get().history;
 
     set({

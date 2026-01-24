@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
+use sysinfo::Disks;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiskInfo {
@@ -20,76 +21,49 @@ pub struct FileEntry {
 
 /// Get list of available disks/volumes
 pub fn get_disks() -> Vec<DiskInfo> {
-    let mut disks = Vec::new();
+    let mut disk_infos = Vec::new();
+    let disks = Disks::new_with_refreshed_list();
 
-    #[cfg(target_os = "macos")]
-    {
-        // On macOS, list /Volumes
-        if let Ok(entries) = fs::read_dir("/Volumes") {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if let Ok(metadata) = fs::metadata(&path) {
-                    if metadata.is_dir() {
-                        let name = path.file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .to_string();
+    for disk in disks.list() {
+        let name = disk.name().to_string_lossy().to_string();
+        let path = disk.mount_point().to_string_lossy().to_string();
+        let total_space = disk.total_space();
+        let available_space = disk.available_space();
 
-                        disks.push(DiskInfo {
-                            name: name.clone(),
-                            path: path.to_string_lossy().to_string(),
-                            total_space: 0,
-                            available_space: 0,
-                        });
-                    }
+        // Create a display name with drive letter and volume name
+        let display_name = if cfg!(target_os = "windows") {
+            // For Windows, show drive letter + volume name
+            if let Some(drive_letter) = path.chars().next() {
+                if name.is_empty() {
+                    format!("{}:", drive_letter)
+                } else {
+                    format!("{}: {}", drive_letter, name)
+                }
+            } else {
+                if name.is_empty() {
+                    path.clone()
+                } else {
+                    name
                 }
             }
-        }
-
-        // Also add home directory as a convenient entry point
-        if let Some(home) = dirs::home_dir() {
-            disks.insert(0, DiskInfo {
-                name: "Home".to_string(),
-                path: home.to_string_lossy().to_string(),
-                total_space: 0,
-                available_space: 0,
-            });
-        }
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        // On Windows, list drive letters
-        for letter in b'A'..=b'Z' {
-            let drive = format!("{}:\\", letter as char);
-            if Path::new(&drive).exists() {
-                disks.push(DiskInfo {
-                    name: format!("{}: Drive", letter as char),
-                    path: drive,
-                    total_space: 0,
-                    available_space: 0,
-                });
+        } else {
+            // For Unix-like systems
+            if name.is_empty() {
+                path.clone()
+            } else {
+                format!("{} ({})", path, name)
             }
-        }
+        };
+
+        disk_infos.push(DiskInfo {
+            name: display_name,
+            path,
+            total_space,
+            available_space,
+        });
     }
 
-    #[cfg(target_os = "linux")]
-    {
-        // On Linux, check common mount points
-        let mount_points = ["/", "/home", "/mnt", "/media"];
-        for mp in mount_points {
-            if Path::new(mp).exists() {
-                disks.push(DiskInfo {
-                    name: mp.to_string(),
-                    path: mp.to_string(),
-                    total_space: 0,
-                    available_space: 0,
-                });
-            }
-        }
-    }
-
-    disks
+    disk_infos
 }
 
 /// Calculate folder size recursively with depth limit

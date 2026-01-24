@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import RetroScene from "./components/RetroScene";
+import SplashScreen from "./components/SplashScreen";
 // import ControlPanel from "./components/ControlPanel";
 import { DEFAULT_SETTINGS, type Settings } from "./types";
 import "./App.css";
@@ -16,6 +17,7 @@ async function invokeCommand<T>(cmd: string, args?: Record<string, unknown>): Pr
 
 function App() {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  const [showSplash, setShowSplash] = useState(true);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
 
   useEffect(() => {
@@ -75,6 +77,7 @@ function App() {
 
   return (
     <div className="app">
+      {showSplash && <SplashScreen onComplete={() => setShowSplash(false)} />}
       <RetroScene settings={settings} onRendererReady={handleRendererReady} />
 {/* <ControlPanel
         settings={settings}
