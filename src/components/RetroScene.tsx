@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import * as CANNON from "cannon-es";
 import { invoke } from "@tauri-apps/api/core";
+import * as Tone from "tone";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
@@ -203,9 +204,17 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
       border-radius: 50%;
       animation: spin 1s linear infinite;
     `;
-    // Add keyframes for spinner
+    // Add keyframes for spinner and custom font
     const style = document.createElement("style");
-    style.textContent = `@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`;
+    style.textContent = `
+      @font-face {
+        font-family: 'VCR OSD Mono';
+        src: url('/src/assets/VCR_OSD_MONO_1.001.ttf') format('truetype');
+        font-weight: normal;
+        font-style: normal;
+      }
+      @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    `;
     document.head.appendChild(style);
     loadingOverlay.appendChild(spinner);
     container.appendChild(loadingOverlay);
@@ -216,6 +225,90 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
     function hideLoading() {
       loadingOverlay.style.display = "none";
     }
+
+    // Sound system - Cyberpunk/Tron style
+    const reverb = new Tone.Reverb({ decay: 1.5, wet: 0.3 }).toDestination();
+    const filter = new Tone.Filter(800, "lowpass").connect(reverb);
+
+    // Deep bass synth for main sounds
+    const bassSynth = new Tone.MonoSynth({
+      oscillator: { type: "sawtooth" },
+      envelope: { attack: 0.02, decay: 0.3, sustain: 0.2, release: 0.4 },
+      filterEnvelope: { attack: 0.01, decay: 0.2, sustain: 0.3, release: 0.3, baseFrequency: 200, octaves: 2 },
+      volume: -8,
+    }).connect(filter);
+
+    // Sub bass for impacts
+    const subBass = new Tone.MonoSynth({
+      oscillator: { type: "sine" },
+      envelope: { attack: 0.01, decay: 0.4, sustain: 0, release: 0.3 },
+      volume: -6,
+    }).connect(reverb);
+
+    // Glitchy high synth for accents
+    const glitchSynth = new Tone.MonoSynth({
+      oscillator: { type: "triangle" },
+      envelope: { attack: 0.005, decay: 0.1, sustain: 0, release: 0.1 },
+      filterEnvelope: { attack: 0.005, decay: 0.1, sustain: 0, release: 0.1, baseFrequency: 2000, octaves: -2 },
+      volume: -18,
+    }).connect(reverb);
+
+    // FM synth for digital sounds
+    const fmSynth = new Tone.FMSynth({
+      harmonicity: 3,
+      modulationIndex: 10,
+      oscillator: { type: "triangle" },
+      envelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.3 },
+      modulation: { type: "square" },
+      modulationEnvelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.2 },
+      volume: -15,
+    }).connect(filter);
+
+    let audioStarted = false;
+    async function ensureAudio() {
+      if (!audioStarted) {
+        await Tone.start();
+        audioStarted = true;
+      }
+    }
+
+    function playPickup() {
+      ensureAudio();
+      bassSynth.triggerAttackRelease("C2", 0.15);
+      glitchSynth.triggerAttackRelease("G4", 0.08, Tone.now() + 0.02);
+    }
+
+    function playDrop() {
+      ensureAudio();
+      subBass.triggerAttackRelease("E1", 0.25);
+      glitchSynth.triggerAttackRelease("C3", 0.1);
+    }
+
+    function playNavigateIn() {
+      ensureAudio();
+      fmSynth.triggerAttackRelease("C2", 0.2, Tone.now());
+      fmSynth.triggerAttackRelease("G2", 0.15, Tone.now() + 0.1);
+      glitchSynth.triggerAttackRelease("C4", 0.1, Tone.now() + 0.15);
+    }
+
+    function playNavigateBack() {
+      ensureAudio();
+      fmSynth.triggerAttackRelease("G2", 0.15, Tone.now());
+      fmSynth.triggerAttackRelease("C2", 0.2, Tone.now() + 0.1);
+      subBass.triggerAttackRelease("C1", 0.3, Tone.now() + 0.05);
+    }
+
+    function playSpawn() {
+      ensureAudio();
+      bassSynth.triggerAttackRelease("G1", 0.1);
+      glitchSynth.triggerAttackRelease("E5", 0.05, Tone.now() + 0.02);
+    }
+
+    function playLand() {
+      ensureAudio();
+      subBass.triggerAttackRelease("C1", 0.15);
+    }
+
     let frameCount = 0;
     let lastFpsUpdate = performance.now();
     let currentFps = 0;
@@ -305,6 +398,17 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
     groundBody.position.y = -1.2;
     world.addBody(groundBody);
 
+    // Play sound on ground collision
+    const recentLands = new Set<number>();
+    groundBody.addEventListener("collide", (event: { body: CANNON.Body }) => {
+      const bodyId = event.body.id;
+      if (!recentLands.has(bodyId)) {
+        recentLands.add(bodyId);
+        playLand();
+        setTimeout(() => recentLands.delete(bodyId), 300);
+      }
+    });
+
     // Invisible walls
     const wallSize = 7.5;
     const wallHeight = 10;
@@ -368,7 +472,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
         background: rgba(0, 0, 0, 0.7);
         border: 2px solid #ff0000;
         padding: ${padding}px ${padding * 2}px;
-        font: ${fontSize}px ui-monospace, monospace;
+        font: ${fontSize}px 'VCR OSD Mono', ui-monospace, monospace;
         color: #ffffff;
         white-space: nowrap;
         pointer-events: auto;
@@ -378,6 +482,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
         transition: background 0.15s;
         user-select: none;
         -webkit-user-select: none;
+        letter-spacing: 1px;
       `;
 
       const nameDiv = document.createElement("div");
@@ -631,6 +736,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
 
     // Spawn entries as 3D objects
     function spawnEntries(entries: FileEntry[]) {
+      if (entries.length > 0) playSpawn();
       const count = Math.min(entries.length, 20); // Limit to 20 objects
       const entriesToShow = entries.slice(0, count);
 
@@ -703,6 +809,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
 
     // Navigate into a folder
     async function navigateIntoFolder(folderPath: string) {
+      playNavigateIn();
       await loadDirectory(folderPath);
     }
 
@@ -710,6 +817,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
     function navigateBack() {
       const previous = goBack();
       if (previous) {
+        playNavigateBack();
         exitCurrentObjects(300);
         setTimeout(() => spawnEntries(previous.entries), 150);
       }
@@ -806,6 +914,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
 
         if (hitObj && !hitObj.isExiting) {
           draggedObject = hitObj;
+          playPickup();
 
           // Scale up for dragging
           const bigScale = hitObj.originalScale.clone().multiplyScalar(1.3);
@@ -860,6 +969,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
 
     function onMouseUp() {
       if (draggedObject) {
+        playDrop();
         startScaleAnim(draggedObject, draggedObject.originalScale, 400);
         const mat = draggedObject.mesh.material as THREE.MeshStandardMaterial;
         mat.emissive.setHex(draggedObject.originalEmissive);
@@ -1100,6 +1210,12 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
       container.removeChild(fpsDiv);
       container.removeChild(loadingOverlay);
       style.remove();
+      bassSynth.dispose();
+      subBass.dispose();
+      glitchSynth.dispose();
+      fmSynth.dispose();
+      filter.dispose();
+      reverb.dispose();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onRendererReady]);
