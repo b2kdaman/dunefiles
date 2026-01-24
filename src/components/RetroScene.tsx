@@ -43,6 +43,7 @@ type SceneObject = {
   fileName: string;
   fileSize: string;
   isDir: boolean;
+  isDisk?: boolean;
   isExiting?: boolean;
 };
 
@@ -349,6 +350,15 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
     controls.maxDistance = 18;
     controls.maxPolarAngle = THREE.MathUtils.degToRad(80);
 
+    // Enable panning with middle mouse button
+    controls.enablePan = true;
+    controls.mouseButtons = {
+      LEFT: THREE.MOUSE.ROTATE,
+      MIDDLE: THREE.MOUSE.PAN,
+      RIGHT: THREE.MOUSE.ROTATE
+    };
+    controls.panSpeed = 0.8;
+
     // Physics world
     const world = new CANNON.World();
     world.gravity.set(0, -25, 0);
@@ -574,12 +584,70 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
     // Initialize with default walls
     updateWalls(5, 1.0);
 
-    // Grid
-    const grid = new THREE.GridHelper(30, 30, 0x221010, 0x1a0a0a);
-    grid.position.y = -1.19;
-    (grid.material as THREE.Material).opacity = 0.35;
-    (grid.material as THREE.Material).transparent = true;
-    scene.add(grid);
+    // Infinite grid shader - red squares extending to horizon
+    const infiniteGridShader = {
+      uniforms: {
+        gridColor: { value: new THREE.Color(0xff0000) },
+        gridSize: { value: 1.5 },
+        fadeDistance: { value: 25.0 },
+        opacity: { value: 0.4 },
+      },
+      vertexShader: /* glsl */ `
+        varying vec3 vWorldPosition;
+        void main() {
+          vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+          vWorldPosition = worldPosition.xyz;
+          gl_Position = projectionMatrix * viewMatrix * worldPosition;
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        uniform vec3 gridColor;
+        uniform float gridSize;
+        uniform float fadeDistance;
+        uniform float opacity;
+        varying vec3 vWorldPosition;
+
+        float getGrid(vec2 pos, float scale) {
+          vec2 coord = pos / scale;
+          vec2 grid = abs(fract(coord - 0.5) - 0.5) / fwidth(coord);
+          float line = min(grid.x, grid.y);
+          return 1.0 - min(line, 1.0);
+        }
+
+        void main() {
+          // Distance from camera for fade
+          float dist = length(vWorldPosition.xz);
+          float fadeFactor = 1.0 - smoothstep(fadeDistance * 0.5, fadeDistance, dist);
+
+          // Get grid lines
+          float grid1 = getGrid(vWorldPosition.xz, gridSize);
+          float grid2 = getGrid(vWorldPosition.xz, gridSize * 5.0) * 0.5; // Larger grid, dimmer
+
+          float gridValue = max(grid1, grid2);
+
+          // Fade color to black with distance
+          vec3 finalColor = mix(vec3(0.0), gridColor, fadeFactor);
+
+          // Apply fade and opacity
+          float finalAlpha = gridValue * fadeFactor * opacity;
+
+          gl_FragColor = vec4(finalColor, finalAlpha);
+        }
+      `,
+    };
+
+    const gridGeometry = new THREE.PlaneGeometry(200, 200);
+    const gridMaterial = new THREE.ShaderMaterial({
+      uniforms: infiniteGridShader.uniforms,
+      vertexShader: infiniteGridShader.vertexShader,
+      fragmentShader: infiniteGridShader.fragmentShader,
+      transparent: true,
+      depthWrite: false,
+    });
+    const infiniteGrid = new THREE.Mesh(gridGeometry, gridMaterial);
+    infiniteGrid.rotation.x = -Math.PI / 2;
+    infiniteGrid.position.y = -1.195;
+    scene.add(infiniteGrid);
 
     // Helper functions
     function createThickEdges(geometry: THREE.BufferGeometry, color: number, lineWidth: number, thresholdAngle = 1): Line2 {
@@ -887,6 +955,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
         fileName: disk.name,
         fileSize: sizeLabel,
         isDir: true, // Disks are navigable
+        isDisk: true, // Mark as disk for special handling
       };
       sceneObjects.push(obj);
       return obj;
@@ -1251,11 +1320,12 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
       const intersects = raycaster.intersectObjects(meshes);
 
       if (intersects.length > 0) {
-        controls.enabled = false;
         const hitMesh = intersects[0].object;
         const hitObj = sceneObjects.find(o => o.mesh === hitMesh);
 
-        if (hitObj && !hitObj.isExiting) {
+        // Don't allow dragging disks (cubes)
+        if (hitObj && !hitObj.isExiting && !hitObj.isDisk) {
+          controls.enabled = false;
           draggedObject = hitObj;
           playPickup();
 
@@ -1618,6 +1688,9 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
         layer.geometry.dispose();
         (layer.material as THREE.Material).dispose();
       });
+      scene.remove(infiniteGrid);
+      gridGeometry.dispose();
+      gridMaterial.dispose();
       container.removeChild(renderer.domElement);
       container.removeChild(labelRenderer.domElement);
       container.removeChild(fpsDiv);
