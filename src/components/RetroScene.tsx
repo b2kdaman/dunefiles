@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import * as CANNON from "cannon-es";
+import { invoke } from "@tauri-apps/api/core";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
@@ -10,8 +11,15 @@ import { Line2 } from "three/examples/jsm/lines/Line2.js";
 import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { CSS2DRenderer, CSS2DObject } from "three/examples/jsm/renderers/CSS2DRenderer.js";
-import { useSceneStore, type ObjectData } from "../store/sceneStore";
+import { useSceneStore, type FileEntry } from "../store/sceneStore";
 import type { Settings } from "../types";
+
+type DiskInfo = {
+  name: string;
+  path: string;
+  total_space: number;
+  available_space: number;
+};
 
 const BLOOM_LAYER = 1;
 
@@ -30,11 +38,26 @@ type SceneObject = {
   originalScale: THREE.Vector3;
   originalEmissive: number;
   originalEmissiveIntensity: number;
-  hasLabel: boolean;
-  labelName: string;
-  labelSize: string;
+  filePath: string;
+  fileName: string;
+  fileSize: string;
+  isDir: boolean;
   isExiting?: boolean;
 };
+
+// Format bytes to human readable
+function formatSize(bytes: number): string {
+  const KB = 1024;
+  const MB = KB * 1024;
+  const GB = MB * 1024;
+  const TB = GB * 1024;
+
+  if (bytes >= TB) return `${(bytes / TB).toFixed(1)} TB`;
+  if (bytes >= GB) return `${(bytes / GB).toFixed(1)} GB`;
+  if (bytes >= MB) return `${(bytes / MB).toFixed(1)} MB`;
+  if (bytes >= KB) return `${(bytes / KB).toFixed(1)} KB`;
+  return `${bytes} B`;
+}
 
 const DitherPixelShader = {
   uniforms: {
@@ -105,14 +128,16 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
     scene: THREE.Scene;
     world: CANNON.World;
     sceneObjects: SceneObject[];
-    createSphere: (scale: number, position: THREE.Vector3, velocity: THREE.Vector3, hasLabel?: boolean, labelName?: string, labelSize?: string) => SceneObject;
-    createDiamond: (scale: number, position: THREE.Vector3, velocity: THREE.Vector3, hasLabel?: boolean, labelName?: string, labelSize?: string) => SceneObject;
+    createFolder: (entry: FileEntry, position: THREE.Vector3, velocity: THREE.Vector3) => SceneObject;
+    createFile: (entry: FileEntry, position: THREE.Vector3, velocity: THREE.Vector3) => SceneObject;
     removeObject: (obj: SceneObject) => void;
+    spawnEntries: (entries: FileEntry[]) => void;
     exitAnims: ExitAnim[];
   } | null>(null);
 
-  const { pushState, goBack, canGoBack } = useSceneStore();
+  const { navigateTo, goBack, canGoBack } = useSceneStore();
   const navigateBackRef = useRef<(() => void) | null>(null);
+  const loadDirectoryRef = useRef<((path: string) => Promise<void>) | null>(null);
 
   type ExitAnim = {
     obj: SceneObject;
@@ -154,6 +179,43 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
       pointer-events: none;
     `;
     container.appendChild(fpsDiv);
+
+    // Loading overlay
+    const loadingOverlay = document.createElement("div");
+    loadingOverlay.style.cssText = `
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.7);
+      display: none;
+      justify-content: center;
+      align-items: center;
+      z-index: 200;
+    `;
+    const spinner = document.createElement("div");
+    spinner.style.cssText = `
+      width: 50px;
+      height: 50px;
+      border: 4px solid #333;
+      border-top: 4px solid #ff4444;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    `;
+    // Add keyframes for spinner
+    const style = document.createElement("style");
+    style.textContent = `@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`;
+    document.head.appendChild(style);
+    loadingOverlay.appendChild(spinner);
+    container.appendChild(loadingOverlay);
+
+    function showLoading() {
+      loadingOverlay.style.display = "flex";
+    }
+    function hideLoading() {
+      loadingOverlay.style.display = "none";
+    }
     let frameCount = 0;
     let lastFpsUpdate = performance.now();
     let currentFps = 0;
@@ -244,7 +306,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
     world.addBody(groundBody);
 
     // Invisible walls
-    const wallSize = 6;
+    const wallSize = 7.5;
     const wallHeight = 10;
     const wallThickness = 0.5;
     const wallShapeX = new CANNON.Box(new CANNON.Vec3(wallThickness, wallHeight, wallSize));
@@ -291,20 +353,76 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
       return new Line2(lineGeo, lineMat);
     }
 
-    function createLabel(name: string, size: string): CSS2DObject {
+    function createLabel(name: string, size: string, scale: number): CSS2DObject {
+      // Trim long names
+      const maxLen = 16;
+      const displayName = name.length > maxLen ? name.slice(0, maxLen - 1) + "…" : name;
+      const isTrimmed = name.length > maxLen;
+
+      // Scale font size: 10px to 16px based on object scale
+      const fontSize = Math.round(10 + (scale - MIN_SCALE) / (MAX_SCALE - MIN_SCALE) * 6);
+      const padding = Math.round(3 + scale * 2);
+
       const div = document.createElement("div");
       div.style.cssText = `
         background: rgba(0, 0, 0, 0.7);
         border: 2px solid #ff0000;
-        padding: 4px 8px;
-        font: 12px ui-monospace, monospace;
+        padding: ${padding}px ${padding * 2}px;
+        font: ${fontSize}px ui-monospace, monospace;
         color: #ffffff;
         white-space: nowrap;
-        pointer-events: none;
+        pointer-events: auto;
+        text-align: center;
+        transform: translate(-50%, -50%);
+        cursor: default;
+        transition: background 0.15s;
+        user-select: none;
+        -webkit-user-select: none;
       `;
-      div.innerHTML = `<div style="color: #ff6666">${name}</div><div style="color: #888">${size}</div>`;
+
+      const nameDiv = document.createElement("div");
+      nameDiv.style.color = "#ff6666";
+      nameDiv.textContent = displayName;
+      div.appendChild(nameDiv);
+
+      if (size) {
+        const sizeDiv = document.createElement("div");
+        sizeDiv.style.color = "#888";
+        sizeDiv.textContent = size;
+        div.appendChild(sizeDiv);
+      }
+
+      // Show full name on hover if trimmed
+      if (isTrimmed) {
+        div.addEventListener("mouseenter", () => {
+          nameDiv.textContent = name;
+          div.style.background = "rgba(0, 0, 0, 0.9)";
+          div.style.zIndex = "1000";
+        });
+        div.addEventListener("mouseleave", () => {
+          nameDiv.textContent = displayName;
+          div.style.background = "rgba(0, 0, 0, 0.7)";
+          div.style.zIndex = "";
+        });
+      }
+
+      // Pass through click/drag events to the scene
+      const passThrough = (e: MouseEvent) => {
+        div.style.pointerEvents = "none";
+        const elementBelow = document.elementFromPoint(e.clientX, e.clientY);
+        div.style.pointerEvents = "auto";
+        if (elementBelow && elementBelow !== div) {
+          elementBelow.dispatchEvent(new MouseEvent(e.type, e));
+        }
+      };
+      div.addEventListener("mousedown", passThrough);
+      div.addEventListener("mouseup", passThrough);
+      div.addEventListener("mousemove", passThrough);
+      div.addEventListener("dblclick", passThrough);
+
       const label = new CSS2DObject(div);
-      label.position.set(1.2, 1.2, 0);
+      label.position.set(0, 0, 0);
+      label.center.set(0.5, 0.5);
       return label;
     }
 
@@ -312,10 +430,24 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
     const sceneObjects: SceneObject[] = [];
     const SPHERE_RADIUS = 1.1;
     const DIAMOND_RADIUS = 1.0;
+    const MIN_SCALE = 0.3;
+    const MAX_SCALE = 1.5;
 
-    // Create sphere helper
-    function createSphere(scale: number, position: THREE.Vector3, velocity: THREE.Vector3, hasLabel = false, labelName = "", labelSize = ""): SceneObject {
-      const geo = new THREE.SphereGeometry(SPHERE_RADIUS * scale, scale > 0.5 ? 24 : 16, scale > 0.5 ? 16 : 12);
+    // Calculate scale based on size (exponential for dramatic difference)
+    function sizeToScale(size: number, maxSize: number): number {
+      if (maxSize <= 0 || size <= 0) return MIN_SCALE;
+      // Use square root for visible size differences
+      const ratio = Math.sqrt(size / maxSize);
+      // Apply power curve for more dramatic scaling
+      const curved = Math.pow(ratio, 0.6);
+      return MIN_SCALE + (MAX_SCALE - MIN_SCALE) * curved;
+    }
+
+    // Create folder (sphere) helper
+    function createFolder(entry: FileEntry, position: THREE.Vector3, velocity: THREE.Vector3, maxSize: number): SceneObject {
+      const scale = sizeToScale(entry.size, maxSize);
+      const sizeStr = formatSize(entry.size);
+      const geo = new THREE.SphereGeometry(SPHERE_RADIUS * scale, 24, 16);
       const mesh = new THREE.Mesh(
         geo,
         new THREE.MeshStandardMaterial({ color: 0x442a2a, roughness: 0.65, metalness: 0.15 })
@@ -333,11 +465,9 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
       body.velocity.set(velocity.x, velocity.y, velocity.z);
       body.angularFactor.set(0, 1, 0);
 
-      const edges = createThickEdges(geo, 0xff0000, scale > 0.5 ? 4 : 3, 1);
+      const edges = createThickEdges(geo, 0xff0000, scale > 0.6 ? 4 : 3, 1);
 
-      if (hasLabel) {
-        mesh.add(createLabel(labelName, labelSize));
-      }
+      mesh.add(createLabel(entry.name, sizeStr, scale));
 
       scene.add(mesh);
       scene.add(edges);
@@ -353,16 +483,18 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
         originalScale: new THREE.Vector3(1, 1, 1),
         originalEmissive: 0x000000,
         originalEmissiveIntensity: 0,
-        hasLabel,
-        labelName,
-        labelSize,
+        filePath: entry.path,
+        fileName: entry.name,
+        fileSize: sizeStr,
+        isDir: true,
       };
       sceneObjects.push(obj);
       return obj;
     }
 
-    // Create diamond helper
-    function createDiamond(scale: number, position: THREE.Vector3, velocity: THREE.Vector3, hasLabel = false, labelName = "", labelSize = ""): SceneObject {
+    // Create file (diamond) helper
+    function createFile(entry: FileEntry, position: THREE.Vector3, velocity: THREE.Vector3, maxSize: number): SceneObject {
+      const scale = sizeToScale(entry.size, maxSize);
       const geo = new THREE.OctahedronGeometry(DIAMOND_RADIUS * scale, 0);
       const mesh = new THREE.Mesh(
         geo,
@@ -388,12 +520,11 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
       body.velocity.set(velocity.x, velocity.y, velocity.z);
       body.angularFactor.set(0, 1, 0);
 
-      const edges = createThickEdges(geo, 0xff0000, scale > 0.5 ? 4 : 3, 1);
+      const edges = createThickEdges(geo, 0xff0000, 3, 1);
       edges.scale.set(0.7, 1, 0.7);
 
-      if (hasLabel) {
-        mesh.add(createLabel(labelName, labelSize));
-      }
+      const sizeStr = formatSize(entry.size);
+      mesh.add(createLabel(entry.name, sizeStr, scale));
 
       scene.add(mesh);
       scene.add(edges);
@@ -409,9 +540,64 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
         originalScale: new THREE.Vector3(0.7, 1, 0.7),
         originalEmissive: 0x200505,
         originalEmissiveIntensity: 0.35,
-        hasLabel,
-        labelName,
-        labelSize,
+        filePath: entry.path,
+        fileName: entry.name,
+        fileSize: sizeStr,
+        isDir: false,
+      };
+      sceneObjects.push(obj);
+      return obj;
+    }
+
+    // Create disk (cube) helper - for Windows/Linux disk drives
+    function createDisk(disk: DiskInfo, position: THREE.Vector3, velocity: THREE.Vector3): SceneObject {
+      const scale = 1.0;
+      const cubeSize = 1.2;
+      const geo = new THREE.BoxGeometry(cubeSize * scale, cubeSize * scale, cubeSize * scale);
+      const mesh = new THREE.Mesh(
+        geo,
+        new THREE.MeshStandardMaterial({
+          color: 0x3a3a4a,
+          roughness: 0.5,
+          metalness: 0.3,
+          emissive: 0x101020,
+          emissiveIntensity: 0.2,
+        })
+      );
+      mesh.castShadow = true;
+
+      const body = new CANNON.Body({
+        mass: scale * 1.5,
+        shape: new CANNON.Box(new CANNON.Vec3(cubeSize * scale / 2, cubeSize * scale / 2, cubeSize * scale / 2)),
+        material: defaultMaterial,
+        linearDamping: 0.3,
+        angularDamping: 0.3,
+      });
+      body.position.set(position.x, position.y, position.z);
+      body.velocity.set(velocity.x, velocity.y, velocity.z);
+
+      const edges = createThickEdges(geo, 0xff0000, 4, 1);
+
+      mesh.add(createLabel(disk.name, "", scale));
+
+      scene.add(mesh);
+      scene.add(edges);
+      world.addBody(body);
+
+      const obj: SceneObject = {
+        id: generateId(),
+        mesh,
+        body,
+        edges,
+        type: "sphere", // Treat as navigable like folders
+        scale,
+        originalScale: new THREE.Vector3(1, 1, 1),
+        originalEmissive: 0x101020,
+        originalEmissiveIntensity: 0.2,
+        filePath: disk.path,
+        fileName: disk.name,
+        fileSize: "",
+        isDir: true, // Disks are navigable
       };
       sceneObjects.push(obj);
       return obj;
@@ -421,6 +607,21 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
     function removeObject(obj: SceneObject) {
       const idx = sceneObjects.indexOf(obj);
       if (idx !== -1) sceneObjects.splice(idx, 1);
+
+      // Remove CSS2D labels (children of mesh)
+      const toRemove: THREE.Object3D[] = [];
+      obj.mesh.traverse((child) => {
+        if ((child as CSS2DObject).isCSS2DObject) {
+          toRemove.push(child);
+          // Remove the DOM element
+          const css2d = child as CSS2DObject;
+          if (css2d.element && css2d.element.parentNode) {
+            css2d.element.parentNode.removeChild(css2d.element);
+          }
+        }
+      });
+      toRemove.forEach((child) => obj.mesh.remove(child));
+
       scene.remove(obj.mesh);
       scene.remove(obj.edges);
       world.removeBody(obj.body);
@@ -428,37 +629,34 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
       (obj.mesh.material as THREE.Material).dispose();
     }
 
-    // Convert scene objects to serializable data
-    function objectsToData(): ObjectData[] {
-      return sceneObjects
-        .filter(obj => !obj.isExiting)
-        .map(obj => ({
-          id: obj.id,
-          type: obj.type,
-          scale: obj.scale,
-          position: [obj.body.position.x, obj.body.position.y, obj.body.position.z] as [number, number, number],
-          velocity: [obj.body.velocity.x, obj.body.velocity.y, obj.body.velocity.z] as [number, number, number],
-          hasLabel: obj.hasLabel,
-          labelName: obj.labelName,
-          labelSize: obj.labelSize,
-        }));
-    }
+    // Spawn entries as 3D objects
+    function spawnEntries(entries: FileEntry[]) {
+      const count = Math.min(entries.length, 20); // Limit to 20 objects
+      const entriesToShow = entries.slice(0, count);
 
-    // Restore objects from data
-    function restoreFromData(data: ObjectData[]) {
-      // Remove all current objects
-      while (sceneObjects.length > 0) {
-        removeObject(sceneObjects[0]);
-      }
+      // Calculate max size for scaling
+      const maxSize = Math.max(...entriesToShow.map(e => e.size), 1);
 
-      // Create objects from data
-      for (const d of data) {
-        const pos = new THREE.Vector3(d.position[0], d.position[1], d.position[2]);
-        const vel = new THREE.Vector3(d.velocity[0], d.velocity[1], d.velocity[2]);
-        if (d.type === "sphere") {
-          createSphere(d.scale, pos, vel, d.hasLabel, d.labelName, d.labelSize);
+      for (let i = 0; i < count; i++) {
+        const entry = entriesToShow[i];
+        const angle = (i / count) * Math.PI * 2 + Math.random() * 0.3;
+        const radius = 1.5 + Math.random() * 2;
+
+        const spawnPos = new THREE.Vector3(
+          Math.cos(angle) * radius,
+          5 + Math.random() * 3,
+          Math.sin(angle) * radius
+        );
+        const spawnVel = new THREE.Vector3(
+          (Math.random() - 0.5) * 2,
+          -2,
+          (Math.random() - 0.5) * 2
+        );
+
+        if (entry.is_dir) {
+          createFolder(entry, spawnPos, spawnVel, maxSize);
         } else {
-          createDiamond(d.scale, pos, vel, d.hasLabel, d.labelName, d.labelSize);
+          createFile(entry, spawnPos, spawnVel, maxSize);
         }
       }
     }
@@ -466,18 +664,12 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
     // Exit animations (scale up and fade out)
     let exitAnims: ExitAnim[] = [];
 
-    // Navigate into a sphere - old objects exit, new ones spawn
-    function navigateInto() {
-      // Save current state to history
-      const currentData = objectsToData();
-      pushState(currentData);
-
-      // Mark all current objects as exiting and start exit animation
+    // Exit all current objects with animation
+    function exitCurrentObjects(duration = 400) {
       const now = performance.now();
       for (const obj of sceneObjects) {
         if (!obj.isExiting) {
           obj.isExiting = true;
-          // Disable physics
           obj.body.type = CANNON.Body.STATIC;
           obj.body.velocity.set(0, 0, 0);
           obj.body.angularVelocity.set(0, 0, 0);
@@ -486,77 +678,85 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
             obj,
             startScale: obj.mesh.scale.clone(),
             startTime: now,
-            duration: 400,
+            duration,
           });
         }
       }
+    }
 
-      // Spawn new objects after a short delay
-      setTimeout(() => {
-        const count = 2 + Math.floor(Math.random() * 2);
-        for (let i = 0; i < count; i++) {
-          const isSphere = Math.random() > 0.4; // Slightly more spheres
-          const scale = 0.6 + Math.random() * 0.4;
-          const angle = (i / count) * Math.PI * 2 + Math.random() * 0.3;
-          const radius = 1 + Math.random() * 2;
+    // Load directory contents from Rust backend
+    async function loadDirectory(path: string) {
+      showLoading();
+      try {
+        const entries = await invoke<FileEntry[]>("list_directory", { path });
+        navigateTo(path, entries);
+        exitCurrentObjects();
+        setTimeout(() => {
+          spawnEntries(entries);
+          hideLoading();
+        }, 200);
+      } catch (err) {
+        console.error("Failed to load directory:", err);
+        hideLoading();
+      }
+    }
 
-          const spawnPos = new THREE.Vector3(
-            Math.cos(angle) * radius,
-            6 + Math.random() * 2,
-            Math.sin(angle) * radius
-          );
-          const spawnVel = new THREE.Vector3(
-            (Math.random() - 0.5) * 2,
-            -2,
-            (Math.random() - 0.5) * 2
-          );
-
-          if (isSphere) {
-            createSphere(scale, spawnPos, spawnVel);
-          } else {
-            createDiamond(scale, spawnPos, spawnVel);
-          }
-        }
-      }, 200);
+    // Navigate into a folder
+    async function navigateIntoFolder(folderPath: string) {
+      await loadDirectory(folderPath);
     }
 
     // Go back to previous state
     function navigateBack() {
-      const previousData = goBack();
-      if (previousData) {
-        // Exit current objects quickly
-        const now = performance.now();
-        for (const obj of sceneObjects) {
-          if (!obj.isExiting) {
-            obj.isExiting = true;
-            obj.body.type = CANNON.Body.STATIC;
-            obj.body.velocity.set(0, 0, 0);
-            exitAnims.push({
-              obj,
-              startScale: obj.mesh.scale.clone(),
-              startTime: now,
-              duration: 300,
-            });
-          }
-        }
-
-        // Restore after exit animation
-        setTimeout(() => {
-          restoreFromData(previousData);
-        }, 150);
+      const previous = goBack();
+      if (previous) {
+        exitCurrentObjects(300);
+        setTimeout(() => spawnEntries(previous.entries), 150);
       }
     }
 
     // Store ref for external access
-    sceneRef.current = { scene, world, sceneObjects, createSphere, createDiamond, removeObject, exitAnims };
+    sceneRef.current = { scene, world, sceneObjects, createFolder, createFile, removeObject, spawnEntries, exitAnims };
     navigateBackRef.current = navigateBack;
+    loadDirectoryRef.current = loadDirectory;
 
-    // Initial objects
-    createSphere(1, new THREE.Vector3(-2, 6, 1), new THREE.Vector3(1, 0, -1), true, "Photos", "2GB");
-    createDiamond(1, new THREE.Vector3(2, 5, -1), new THREE.Vector3(-1, 1, 1), true, "Archive.zip", "1GB");
+    // Load initial disks/home directory
+    (async () => {
+      try {
+        const disks = await invoke<DiskInfo[]>("get_disks");
+        const isMac = navigator.platform.toLowerCase().includes("mac");
 
-    // Save initial state
-    pushState(objectsToData());
+        if (isMac && disks.length > 0) {
+          // On Mac, load home directory directly
+          await loadDirectory(disks[0].path);
+        } else if (disks.length > 0) {
+          // On Windows/Linux, show disks as cubes
+          const count = disks.length;
+          for (let i = 0; i < count; i++) {
+            const disk = disks[i];
+            const angle = (i / count) * Math.PI * 2;
+            const radius = 2;
+
+            const spawnPos = new THREE.Vector3(
+              Math.cos(angle) * radius,
+              5 + Math.random() * 2,
+              Math.sin(angle) * radius
+            );
+            const spawnVel = new THREE.Vector3(
+              (Math.random() - 0.5) * 2,
+              -2,
+              (Math.random() - 0.5) * 2
+            );
+
+            createDisk(disk, spawnPos, spawnVel);
+          }
+          // Store empty path as current
+          navigateTo("", []);
+        }
+      } catch (err) {
+        console.error("Failed to load disks:", err);
+      }
+    })();
 
     // Interaction state
     const raycaster = new THREE.Raycaster();
@@ -629,7 +829,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
       }
     }
 
-    // Double-click to navigate into spheres
+    // Double-click to navigate into folders (spheres)
     function onDoubleClick(event: MouseEvent) {
       mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
       mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
@@ -642,8 +842,8 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
         const hitMesh = intersects[0].object;
         const hitObj = sceneObjects.find(o => o.mesh === hitMesh);
 
-        if (hitObj && !hitObj.isExiting && hitObj.type === "sphere") {
-          navigateInto();
+        if (hitObj && !hitObj.isExiting && hitObj.isDir) {
+          navigateIntoFolder(hitObj.filePath);
         }
       }
     }
@@ -811,11 +1011,38 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
       // Physics
       world.step(1 / 120, delta, 10);
 
-      // Sync all objects
+      // Sync all objects and update label occlusion
+      const occlusionRaycaster = new THREE.Raycaster();
+      const cameraPos = camera.position.clone();
+
       for (const obj of sceneObjects) {
         if (!obj.isExiting) {
           obj.mesh.position.copy(obj.body.position as unknown as THREE.Vector3);
           obj.mesh.quaternion.copy(obj.body.quaternion as unknown as THREE.Quaternion);
+
+          // Check label occlusion
+          const objPos = obj.mesh.position.clone();
+          const direction = objPos.sub(cameraPos).normalize();
+          occlusionRaycaster.set(cameraPos, direction);
+
+          const otherMeshes = sceneObjects
+            .filter(o => o !== obj && !o.isExiting)
+            .map(o => o.mesh);
+          const intersects = occlusionRaycaster.intersectObjects(otherMeshes);
+
+          // Get distance to this object
+          const distToObj = cameraPos.distanceTo(obj.mesh.position);
+
+          // Check if something is in front
+          const isOccluded = intersects.some(i => i.distance < distToObj - 0.5);
+
+          // Update label opacity
+          obj.mesh.traverse((child) => {
+            if ((child as CSS2DObject).isCSS2DObject) {
+              const label = child as CSS2DObject;
+              label.element.style.opacity = isOccluded ? "0.2" : "1";
+            }
+          });
         }
         obj.edges.position.copy(obj.mesh.position);
         obj.edges.quaternion.copy(obj.mesh.quaternion);
@@ -871,6 +1098,8 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
       container.removeChild(renderer.domElement);
       container.removeChild(labelRenderer.domElement);
       container.removeChild(fpsDiv);
+      container.removeChild(loadingOverlay);
+      style.remove();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onRendererReady]);

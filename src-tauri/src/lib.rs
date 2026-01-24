@@ -1,3 +1,6 @@
+mod scanner;
+
+use scanner::{DiskInfo, FileEntry};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -54,6 +57,16 @@ fn save_settings(settings: Settings) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn get_disks() -> Vec<DiskInfo> {
+    scanner::get_disks()
+}
+
+#[tauri::command]
+fn list_directory(path: String) -> Result<Vec<FileEntry>, String> {
+    scanner::list_directory(&path)
+}
+
+#[tauri::command]
 fn save_screenshot(png_base64: String) -> Result<String, String> {
     let Some(pictures_dir) = dirs::picture_dir() else {
         return Err("Could not determine pictures directory".into());
@@ -88,7 +101,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             load_settings,
             save_settings,
-            save_screenshot
+            save_screenshot,
+            get_disks,
+            list_directory
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
