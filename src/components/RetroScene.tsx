@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import * as CANNON from "cannon-es";
 import { invoke } from "@tauri-apps/api/core";
@@ -134,11 +134,13 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
     removeObject: (obj: SceneObject) => void;
     spawnEntries: (entries: FileEntry[]) => void;
     exitAnims: ExitAnim[];
+    returnToComputer: () => Promise<void>;
   } | null>(null);
 
   const { navigateTo, goBack, canGoBack, currentPath } = useSceneStore();
   const navigateBackRef = useRef<(() => void) | null>(null);
   const loadDirectoryRef = useRef<((path: string) => Promise<void>) | null>(null);
+  const [windowSize, setWindowSize] = useState({ width: window.innerWidth, height: window.innerHeight });
 
   type ExitAnim = {
     obj: SceneObject;
@@ -261,7 +263,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
       envelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.3 },
       modulation: { type: "square" },
       modulationEnvelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.2 },
-      volume: -15,
+      volume: -22,
     }).connect(filter);
 
     let audioStarted = false;
@@ -354,8 +356,8 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
 
     const defaultMaterial = new CANNON.Material("default");
     const contactMaterial = new CANNON.ContactMaterial(defaultMaterial, defaultMaterial, {
-      friction: 0.3,
-      restitution: 0.7,
+      friction: 0.4,
+      restitution: 0.15,
     });
     world.addContactMaterial(contactMaterial);
     world.defaultContactMaterial = contactMaterial;
@@ -392,6 +394,128 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
     plane.position.y = -1.2;
     plane.receiveShadow = true;
     scene.add(plane);
+
+    // Volumetric ground fog - multiple layers with gradient
+    const fogShader = {
+      uniforms: {
+        fogColor: { value: new THREE.Color(0x3a0808) },
+        time: { value: 0 },
+        layerHeight: { value: 0.0 },
+      },
+      vertexShader: /* glsl */ `
+        varying vec3 vWorldPosition;
+        varying vec2 vUv;
+        varying float vHeight;
+        void main() {
+          vUv = uv;
+          vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+          vWorldPosition = worldPosition.xyz;
+          vHeight = position.z; // Local Z becomes height in rotated plane
+          gl_Position = projectionMatrix * viewMatrix * worldPosition;
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        uniform vec3 fogColor;
+        uniform float time;
+        uniform float layerHeight;
+        varying vec3 vWorldPosition;
+        varying vec2 vUv;
+        varying float vHeight;
+
+        float hash(vec2 p) {
+          vec3 p3 = fract(vec3(p.xyx) * 0.13);
+          p3 += dot(p3, p3.yzx + 3.333);
+          return fract((p3.x + p3.y) * p3.z);
+        }
+
+        float noise(vec2 x) {
+          vec2 i = floor(x);
+          vec2 f = fract(x);
+          float a = hash(i);
+          float b = hash(i + vec2(1.0, 0.0));
+          float c = hash(i + vec2(0.0, 1.0));
+          float d = hash(i + vec2(1.0, 1.0));
+          vec2 u = f * f * (3.0 - 2.0 * f);
+          return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+        }
+
+        float fbm(vec2 p) {
+          float value = 0.0;
+          float amplitude = 0.5;
+          float frequency = 1.0;
+          for(int i = 0; i < 5; i++) {
+            value += amplitude * noise(p * frequency);
+            frequency *= 2.0;
+            amplitude *= 0.5;
+          }
+          return value;
+        }
+
+        void main() {
+          // Distance from center
+          float dist = length(vWorldPosition.xz) / 18.0;
+
+          // Animated noise for smoke
+          vec2 fogUv1 = vUv * 2.5 + vec2(time * 0.012, time * 0.008) + layerHeight * 0.5;
+          vec2 fogUv2 = vUv * 3.5 - vec2(time * 0.018, time * 0.012) + layerHeight * 0.3;
+          float noiseValue1 = fbm(fogUv1);
+          float noiseValue2 = fbm(fogUv2);
+          float combinedNoise = (noiseValue1 * 0.6 + noiseValue2 * 0.4);
+
+          // Wispy smoke patterns with threshold
+          float smokeDensity = smoothstep(0.3, 0.7, combinedNoise);
+
+          // Distance falloff
+          float distFactor = 1.0 - smoothstep(0.2, 1.0, dist);
+
+          // Vertical gradient - denser at bottom, fades to top
+          float heightGradient = 1.0 - (vHeight / 3.0 + 0.5);
+          heightGradient = clamp(pow(heightGradient, 1.2), 0.0, 1.0);
+
+          // Combine all factors
+          float alpha = smokeDensity * distFactor * heightGradient;
+
+          // Red glow with gradient
+          vec3 glowColor = mix(fogColor, vec3(0.5, 0.08, 0.08), heightGradient * 0.6);
+
+          gl_FragColor = vec4(glowColor, alpha * 0.6);
+        }
+      `,
+    };
+
+    // Create multiple fog layers for volumetric effect
+    const fogLayers: THREE.Mesh[] = [];
+    for (let i = 0; i < 3; i++) {
+      const layerHeight = i * 0.6;
+      const fogGeometry = new THREE.PlaneGeometry(40, 40, 48, 48);
+
+      // Create vertices with height variation for volumetric look
+      const positions = fogGeometry.attributes.position;
+      for (let j = 0; j < positions.count; j++) {
+        const z = positions.getZ(j);
+        positions.setZ(j, z + (Math.random() - 0.5) * 0.3);
+      }
+      positions.needsUpdate = true;
+
+      const fogMaterial = new THREE.ShaderMaterial({
+        uniforms: {
+          fogColor: { value: new THREE.Color(0x3a0808) },
+          time: { value: 0 },
+          layerHeight: { value: layerHeight },
+        },
+        vertexShader: fogShader.vertexShader,
+        fragmentShader: fogShader.fragmentShader,
+        transparent: true,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+
+      const fogPlane = new THREE.Mesh(fogGeometry, fogMaterial);
+      fogPlane.rotation.x = -Math.PI / 2;
+      fogPlane.position.y = -0.9 + layerHeight;
+      scene.add(fogPlane);
+      fogLayers.push(fogPlane);
+    }
 
     const groundBody = new CANNON.Body({ type: CANNON.Body.STATIC, shape: new CANNON.Plane(), material: defaultMaterial });
     groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
@@ -562,13 +686,13 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
     const MIN_SCALE = 0.3;
     const MAX_SCALE = 1.5;
 
-    // Calculate scale based on size (exponential for dramatic difference)
+    // Calculate scale based on size - more linear for noticeable differences
     function sizeToScale(size: number, maxSize: number): number {
       if (maxSize <= 0 || size <= 0) return MIN_SCALE;
-      // Use square root for visible size differences
-      const ratio = Math.sqrt(size / maxSize);
-      // Apply power curve for more dramatic scaling
-      const curved = Math.pow(ratio, 0.6);
+      // Linear ratio with slight curve for better distribution
+      const ratio = size / maxSize;
+      // Gentle power curve to prevent tiny objects but keep differences visible
+      const curved = Math.pow(ratio, 0.7);
       return MIN_SCALE + (MAX_SCALE - MIN_SCALE) * curved;
     }
 
@@ -585,11 +709,11 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
       mesh.scale.set(scale, scale, scale);
 
       const body = new CANNON.Body({
-        mass: scale,
+        mass: scale * 5,
         shape: new CANNON.Sphere(SPHERE_RADIUS * scale),
         material: defaultMaterial,
-        linearDamping: 0.3,
-        angularDamping: 0.3,
+        linearDamping: 0.6,
+        angularDamping: 0.5,
       });
       body.position.set(position.x, position.y, position.z);
       body.velocity.set(velocity.x, velocity.y, velocity.z);
@@ -641,11 +765,11 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
       mesh.scale.set(0.7 * scale, 1 * scale, 0.7 * scale);
 
       const body = new CANNON.Body({
-        mass: scale,
+        mass: scale * 5,
         shape: new CANNON.Sphere(DIAMOND_RADIUS * scale * 1.2),
         material: defaultMaterial,
-        linearDamping: 0.3,
-        angularDamping: 0.0,
+        linearDamping: 0.6,
+        angularDamping: 0.5,
       });
       body.position.set(position.x, position.y, position.z);
       body.velocity.set(velocity.x, velocity.y, velocity.z);
@@ -711,11 +835,11 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
       mesh.scale.set(scale, scale, scale);
 
       const body = new CANNON.Body({
-        mass: scale * 1.5,
+        mass: scale * 7.5,
         shape: new CANNON.Box(new CANNON.Vec3(cubeSize * scale / 2, cubeSize * scale / 2, cubeSize * scale / 2)),
         material: defaultMaterial,
-        linearDamping: 0.3,
-        angularDamping: 0.3,
+        linearDamping: 0.6,
+        angularDamping: 0.5,
       });
       body.position.set(position.x, position.y, position.z);
       body.velocity.set(velocity.x, velocity.y, velocity.z);
@@ -807,20 +931,34 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
       // Update walls based on number of items and their max scale
       updateWalls(count, maxScale);
 
+      // Tight grid spawning - objects spawn close together
+      const gridSize = Math.ceil(Math.sqrt(count));
+      const spacing = 1.8; // Tight spacing between objects
+
       for (let i = 0; i < count; i++) {
         const entry = entriesToShow[i];
-        const angle = (i / count) * Math.PI * 2 + Math.random() * 0.3;
-        const radius = 1.5 + Math.random() * 2;
 
+        // Calculate grid position
+        const row = Math.floor(i / gridSize);
+        const col = i % gridSize;
+
+        // Center the grid around origin
+        const offsetX = (gridSize - 1) * spacing / 2;
+        const offsetZ = (gridSize - 1) * spacing / 2;
+
+        // Add slight randomization to avoid perfect grid
+        const randomOffset = 0.3;
         const spawnPos = new THREE.Vector3(
-          Math.cos(angle) * radius,
-          5 + Math.random() * 3,
-          Math.sin(angle) * radius
+          col * spacing - offsetX + (Math.random() - 0.5) * randomOffset,
+          5 + Math.random() * 2, // Lower variance in height
+          row * spacing - offsetZ + (Math.random() - 0.5) * randomOffset
         );
+
+        // Minimal horizontal velocity for tighter landing
         const spawnVel = new THREE.Vector3(
-          (Math.random() - 0.5) * 2,
+          (Math.random() - 0.5) * 0.5,
           -2,
-          (Math.random() - 0.5) * 2
+          (Math.random() - 0.5) * 0.5
         );
 
         if (entry.is_dir) {
@@ -907,8 +1045,67 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
       }
     }
 
+    // Function to return to Computer view (disks) without sound
+    async function returnToComputer() {
+      showLoading();
+      try {
+        const disks = await invoke<DiskInfo[]>("get_disks");
+
+        // Clear history and exit current objects
+        const { clearHistory } = useSceneStore.getState();
+        clearHistory();
+        exitCurrentObjects(300);
+
+        setTimeout(async () => {
+          if (disks.length > 0) {
+            // Show disks WITHOUT playing spawn sound
+            const count = disks.length;
+            const maxDiskSize = Math.max(...disks.map(d => d.total_space), 1);
+
+            const MIN_DISK_SCALE = 0.5;
+            const MAX_DISK_SCALE = 1.8;
+            const maxScale = maxDiskSize > 0
+              ? MIN_DISK_SCALE + (MAX_DISK_SCALE - MIN_DISK_SCALE) * Math.sqrt(maxDiskSize / maxDiskSize)
+              : 1.0;
+
+            updateWalls(count, maxScale);
+
+            const gridSize = Math.ceil(Math.sqrt(count));
+            const spacing = 2.0;
+
+            for (let i = 0; i < count; i++) {
+              const disk = disks[i];
+              const row = Math.floor(i / gridSize);
+              const col = i % gridSize;
+              const offsetX = (gridSize - 1) * spacing / 2;
+              const offsetZ = (gridSize - 1) * spacing / 2;
+
+              const spawnPos = new THREE.Vector3(
+                col * spacing - offsetX + (Math.random() - 0.5) * 0.3,
+                8 + Math.random() * 2,
+                row * spacing - offsetZ + (Math.random() - 0.5) * 0.3
+              );
+
+              const spawnVel = new THREE.Vector3(
+                (Math.random() - 0.5) * 0.5,
+                -3,
+                (Math.random() - 0.5) * 0.5
+              );
+
+              createDisk(disk, spawnPos, spawnVel, maxDiskSize);
+            }
+            navigateTo("", []);
+          }
+          hideLoading();
+        }, 200);
+      } catch (err) {
+        console.error("Failed to load disks:", err);
+        hideLoading();
+      }
+    }
+
     // Store ref for external access
-    sceneRef.current = { scene, world, sceneObjects, createFolder, createFile, removeObject, spawnEntries, exitAnims };
+    sceneRef.current = { scene, world, sceneObjects, createFolder, createFile, removeObject, spawnEntries, exitAnims, returnToComputer };
     navigateBackRef.current = navigateBack;
     loadDirectoryRef.current = loadDirectory;
 
@@ -939,23 +1136,33 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
           // Update walls for disks
           updateWalls(count, maxScale);
 
+          // Tight grid spawning for disks
+          const gridSize = Math.ceil(Math.sqrt(count));
+          const spacing = 2.0;
+
           for (let i = 0; i < count; i++) {
             const disk = disks[i];
-            const angle = (i / count) * Math.PI * 2;
-            const radius = 2;
+
+            // Calculate grid position
+            const row = Math.floor(i / gridSize);
+            const col = i % gridSize;
+
+            // Center the grid around origin
+            const offsetX = (gridSize - 1) * spacing / 2;
+            const offsetZ = (gridSize - 1) * spacing / 2;
 
             // Spawn from higher up to create falling effect
             const spawnPos = new THREE.Vector3(
-              Math.cos(angle) * radius,
-              8 + Math.random() * 3, // Higher spawn point
-              Math.sin(angle) * radius
+              col * spacing - offsetX + (Math.random() - 0.5) * 0.3,
+              8 + Math.random() * 2,
+              row * spacing - offsetZ + (Math.random() - 0.5) * 0.3
             );
 
-            // Downward velocity for falling effect
+            // Minimal horizontal velocity
             const spawnVel = new THREE.Vector3(
-              (Math.random() - 0.5) * 1,
-              -3, // Stronger downward velocity
-              (Math.random() - 0.5) * 1
+              (Math.random() - 0.5) * 0.5,
+              -3,
+              (Math.random() - 0.5) * 0.5
             );
 
             createDisk(disk, spawnPos, spawnVel, maxDiskSize);
@@ -1225,6 +1432,12 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
         fpsDiv.textContent = `${currentFps} FPS`;
       }
 
+      // Update fog animation for all layers
+      fogLayers.forEach(layer => {
+        const mat = layer.material as THREE.ShaderMaterial;
+        mat.uniforms.time.value = now * 0.001;
+      });
+
       // Exit animations (scale up to 10x and remove)
       exitAnims = exitAnims.filter(anim => {
         const t = Math.min((now - anim.startTime) / anim.duration, 1);
@@ -1339,14 +1552,47 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
 
     // Resize
     function handleResize() {
-      renderer.setSize(window.innerWidth, window.innerHeight);
-      labelRenderer.setSize(window.innerWidth, window.innerHeight);
-      camera.aspect = window.innerWidth / window.innerHeight;
+      const newWidth = window.innerWidth;
+      const newHeight = window.innerHeight;
+
+      renderer.setSize(newWidth, newHeight);
+      labelRenderer.setSize(newWidth, newHeight);
+      camera.aspect = newWidth / newHeight;
       camera.updateProjectionMatrix();
-      composer.setSize(window.innerWidth, window.innerHeight);
-      bloomComposer.setSize(window.innerWidth, window.innerHeight);
-      bloomPass.resolution.set(window.innerWidth, window.innerHeight);
-      ditherPass.uniforms.resolution.value.set(window.innerWidth, window.innerHeight);
+      composer.setSize(newWidth, newHeight);
+      bloomComposer.setSize(newWidth, newHeight);
+      bloomPass.resolution.set(newWidth, newHeight);
+      ditherPass.uniforms.resolution.value.set(newWidth, newHeight);
+
+      // Update edge line materials resolution
+      for (const obj of sceneObjects) {
+        const lineMat = obj.edges.material as LineMaterial;
+        lineMat.resolution.set(newWidth, newHeight);
+      }
+
+      // Update label font sizes
+      const screenScale = Math.min(newWidth, newHeight) / 1000;
+      for (const obj of sceneObjects) {
+        obj.mesh.traverse((child) => {
+          if ((child as CSS2DObject).isCSS2DObject) {
+            const label = child as CSS2DObject;
+            const div = label.element;
+
+            // Recalculate font size based on new screen size and object scale
+            const baseFontSize = 15 * screenScale;
+            const fontSize = Math.round(baseFontSize + (obj.scale - MIN_SCALE) / (MAX_SCALE - MIN_SCALE) * 9 * screenScale);
+            const padding = Math.round(4.5 + obj.scale * 3);
+
+            // Update font size in the style
+            const currentFont = div.style.font;
+            div.style.font = currentFont.replace(/\d+px/, `${fontSize}px`);
+            div.style.padding = `${padding}px ${padding * 2}px`;
+          }
+        });
+      }
+
+      // Update React state to trigger re-render of UI elements
+      setWindowSize({ width: newWidth, height: newHeight });
     }
     window.addEventListener("resize", handleResize);
 
@@ -1367,6 +1613,11 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
       }
       controls.dispose();
       renderer.dispose();
+      fogLayers.forEach(layer => {
+        scene.remove(layer);
+        layer.geometry.dispose();
+        (layer.material as THREE.Material).dispose();
+      });
       container.removeChild(renderer.domElement);
       container.removeChild(labelRenderer.domElement);
       container.removeChild(fpsDiv);
@@ -1416,13 +1667,10 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
 
   const breadcrumbs = getBreadcrumbs();
 
-  // Navigate to Computer view (disks)
+  // Navigate to Computer view (disks) - without sound
   const navigateToComputer = async () => {
-    if (loadDirectoryRef.current) {
-      // Clear current scene and go back to disks
-      const { clearHistory } = useSceneStore.getState();
-      clearHistory();
-      window.location.reload(); // Reload to show disks again
+    if (sceneRef.current?.returnToComputer) {
+      await sceneRef.current.returnToComputer();
     }
   };
 
@@ -1437,17 +1685,17 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
           transform: "translateX(-50%)",
           background: "rgba(0, 0, 0, 0.7)",
           border: "2px solid #ff0000",
-          padding: `${Math.max(8, Math.min(window.innerWidth, window.innerHeight) / 100)}px ${Math.max(16, Math.min(window.innerWidth, window.innerHeight) / 50)}px`,
-          font: `${Math.max(14, Math.min(window.innerWidth, window.innerHeight) / 50)}px ui-monospace, monospace`,
+          padding: `${Math.max(8, Math.min(windowSize.width, windowSize.height) / 100)}px ${Math.max(16, Math.min(windowSize.width, windowSize.height) / 50)}px`,
+          font: `${Math.max(14, Math.min(windowSize.width, windowSize.height) / 50)}px ui-monospace, monospace`,
           color: "#ff6666",
           zIndex: 100,
           display: "flex",
-          gap: `${Math.max(8, Math.min(window.innerWidth, window.innerHeight) / 100)}px`,
+          gap: `${Math.max(8, Math.min(windowSize.width, windowSize.height) / 100)}px`,
           alignItems: "center",
         }}>
           {breadcrumbs.map((crumb, index) => (
-            <span key={index} style={{ display: "flex", alignItems: "center", gap: `${Math.max(8, Math.min(window.innerWidth, window.innerHeight) / 100)}px` }}>
-              {index > 0 && <span style={{ color: "#ff4444", fontSize: `${Math.max(16, Math.min(window.innerWidth, window.innerHeight) / 40)}px` }}>›</span>}
+            <span key={index} style={{ display: "flex", alignItems: "center", gap: `${Math.max(8, Math.min(windowSize.width, windowSize.height) / 100)}px` }}>
+              {index > 0 && <span style={{ color: "#ff4444", fontSize: `${Math.max(16, Math.min(windowSize.width, windowSize.height) / 40)}px` }}>›</span>}
               <span
                 style={{
                   cursor: index < breadcrumbs.length - 1 ? "pointer" : "default",
@@ -1481,17 +1729,24 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
           ))}
         </div>
       )}
-      {canGoBack && (
+      {(canGoBack || currentPath !== "") && (
         <button
-          onClick={handleBack}
+          onClick={() => {
+            if (canGoBack) {
+              handleBack();
+            } else if (currentPath !== "") {
+              // Go back to Computer level
+              navigateToComputer();
+            }
+          }}
           style={{
             position: "absolute",
             top: 12,
             right: 12,
             background: "rgba(0, 0, 0, 0.7)",
             border: "2px solid #ff0000",
-            padding: `${Math.max(8, Math.min(window.innerWidth, window.innerHeight) / 100)}px ${Math.max(16, Math.min(window.innerWidth, window.innerHeight) / 50)}px`,
-            font: `${Math.max(14, Math.min(window.innerWidth, window.innerHeight) / 50)}px ui-monospace, monospace`,
+            padding: `${Math.max(8, Math.min(windowSize.width, windowSize.height) / 100)}px ${Math.max(16, Math.min(windowSize.width, windowSize.height) / 50)}px`,
+            font: `${Math.max(14, Math.min(windowSize.width, windowSize.height) / 50)}px ui-monospace, monospace`,
             color: "#ff6666",
             cursor: "pointer",
             zIndex: 100,
