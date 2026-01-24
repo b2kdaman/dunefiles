@@ -1,0 +1,91 @@
+.control-panel {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  background: rgba(10, 15, 20, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 16px;
+  min-width: 240px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 12px;
+}
+
+.control-panel h2 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.65);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.slider-row label {
+  flex: 0 0 100px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.slider-row input[type="range"] {
+  flex: 1;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 2px;
+  appearance: none;
+  cursor: pointer;
+}
+
+.slider-row input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  background: #667788;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.slider-row input[type="range"]::-webkit-slider-thumb:hover {
+  background: #8899aa;
+}
+
+.slider-row .value {
+  flex: 0 0 40px;
+  text-align: right;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.button-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.button-row button {
+  flex: 1;
+  padding: 8px 12px;
+  background: rgba(60, 80, 100, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  color: rgba(255, 255, 255, 0.8);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.button-row button:hover {
+  background: rgba(80, 100, 120, 0.7);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.button-row button:active {
+  background: rgba(50, 70, 90, 0.8);
+}

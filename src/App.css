@@ -1,0 +1,16 @@
+.app {
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.hint {
+  position: fixed;
+  left: 12px;
+  bottom: 12px;
+  font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  color: rgba(255, 255, 255, 0.65);
+  user-select: none;
+  pointer-events: none;
+}
