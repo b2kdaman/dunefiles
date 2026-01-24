@@ -6,19 +6,35 @@ import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
-
-// Layer for selective bloom
-const BLOOM_LAYER = 1;
 import { Line2 } from "three/examples/jsm/lines/Line2.js";
 import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { CSS2DRenderer, CSS2DObject } from "three/examples/jsm/renderers/CSS2DRenderer.js";
+import { useSceneStore, type ObjectData } from "../store/sceneStore";
 import type { Settings } from "../types";
+
+const BLOOM_LAYER = 1;
 
 interface RetroSceneProps {
   settings: Settings;
   onRendererReady?: (renderer: THREE.WebGLRenderer) => void;
 }
+
+type SceneObject = {
+  id: string;
+  mesh: THREE.Mesh;
+  body: CANNON.Body;
+  edges: Line2;
+  type: "sphere" | "diamond";
+  scale: number;
+  originalScale: THREE.Vector3;
+  originalEmissive: number;
+  originalEmissiveIntensity: number;
+  hasLabel: boolean;
+  labelName: string;
+  labelSize: string;
+  isExiting?: boolean;
+};
 
 const DitherPixelShader = {
   uniforms: {
@@ -76,13 +92,38 @@ const DitherPixelShader = {
   `,
 };
 
+let objectIdCounter = 0;
+function generateId() {
+  return `obj_${objectIdCounter++}`;
+}
+
 export default function RetroScene({ settings, onRendererReady }: RetroSceneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const ditherPassRef = useRef<ShaderPass | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const sceneRef = useRef<{
+    scene: THREE.Scene;
+    world: CANNON.World;
+    sceneObjects: SceneObject[];
+    createSphere: (scale: number, position: THREE.Vector3, velocity: THREE.Vector3, hasLabel?: boolean, labelName?: string, labelSize?: string) => SceneObject;
+    createDiamond: (scale: number, position: THREE.Vector3, velocity: THREE.Vector3, hasLabel?: boolean, labelName?: string, labelSize?: string) => SceneObject;
+    removeObject: (obj: SceneObject) => void;
+    exitAnims: ExitAnim[];
+  } | null>(null);
+
+  const { pushState, goBack, canGoBack } = useSceneStore();
+  const navigateBackRef = useRef<(() => void) | null>(null);
+
+  type ExitAnim = {
+    obj: SceneObject;
+    startScale: THREE.Vector3;
+    startTime: number;
+    duration: number;
+  };
 
   useEffect(() => {
     if (!containerRef.current) return;
+    const container = containerRef.current;
 
     // Renderer
     const renderer = new THREE.WebGLRenderer({
@@ -97,7 +138,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
     renderer.toneMappingExposure = 0.8;
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    containerRef.current.appendChild(renderer.domElement);
+    container.appendChild(renderer.domElement);
     rendererRef.current = renderer;
     onRendererReady?.(renderer);
 
@@ -112,7 +153,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
       z-index: 100;
       pointer-events: none;
     `;
-    containerRef.current.appendChild(fpsDiv);
+    container.appendChild(fpsDiv);
     let frameCount = 0;
     let lastFpsUpdate = performance.now();
     let currentFps = 0;
@@ -124,25 +165,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
     labelRenderer.domElement.style.top = "0";
     labelRenderer.domElement.style.left = "0";
     labelRenderer.domElement.style.pointerEvents = "none";
-    containerRef.current.appendChild(labelRenderer.domElement);
-
-    // Helper to create label
-    function createLabel(name: string, size: string): CSS2DObject {
-      const div = document.createElement("div");
-      div.style.cssText = `
-        background: rgba(0, 0, 0, 0.7);
-        border: 1px solid #ff0000;
-        padding: 4px 8px;
-        font: 12px ui-monospace, monospace;
-        color: #ffffff;
-        white-space: nowrap;
-        pointer-events: none;
-      `;
-      div.innerHTML = `<div style="color: #ff6666">${name}</div><div style="color: #888">${size}</div>`;
-      const label = new CSS2DObject(div);
-      label.position.set(1.2, 1.2, 0); // Offset to top-right
-      return label;
-    }
+    container.appendChild(labelRenderer.domElement);
 
     // Scene
     const scene = new THREE.Scene();
@@ -150,12 +173,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
     scene.background = new THREE.Color(0x050101);
 
     // Camera
-    const camera = new THREE.PerspectiveCamera(
-      45,
-      window.innerWidth / window.innerHeight,
-      0.1,
-      100
-    );
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
     const camRadius = 9.0;
     const pitch = THREE.MathUtils.degToRad(45);
     const yaw = THREE.MathUtils.degToRad(45);
@@ -176,19 +194,18 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
 
     // Physics world
     const world = new CANNON.World();
-    world.gravity.set(0, -25, 0); // Fast falling
+    world.gravity.set(0, -25, 0);
     world.broadphase = new CANNON.NaiveBroadphase();
 
-    // Physics materials
     const defaultMaterial = new CANNON.Material("default");
     const contactMaterial = new CANNON.ContactMaterial(defaultMaterial, defaultMaterial, {
       friction: 0.3,
-      restitution: 0.7, // More bouncy
+      restitution: 0.7,
     });
     world.addContactMaterial(contactMaterial);
     world.defaultContactMaterial = contactMaterial;
 
-    // Lights (red-tinted)
+    // Lights
     scene.add(new THREE.AmbientLight(0xff4444, 0.4));
 
     const key = new THREE.DirectionalLight(0xff6666, 2.0);
@@ -212,28 +229,39 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
     pointLight.position.set(0, 3, 0);
     scene.add(pointLight);
 
-    // Ground plane
+    // Ground
     const planeGeo = new THREE.PlaneGeometry(30, 30, 1, 1);
-    const planeMat = new THREE.MeshStandardMaterial({
-      color: 0x170b0b,
-      roughness: 0.98,
-      metalness: 0.02,
-    });
+    const planeMat = new THREE.MeshStandardMaterial({ color: 0x170b0b, roughness: 0.98, metalness: 0.02 });
     const plane = new THREE.Mesh(planeGeo, planeMat);
     plane.rotation.x = -Math.PI / 2;
     plane.position.y = -1.2;
     plane.receiveShadow = true;
     scene.add(plane);
 
-    // Ground physics body
-    const groundBody = new CANNON.Body({
-      type: CANNON.Body.STATIC,
-      shape: new CANNON.Plane(),
-      material: defaultMaterial,
-    });
+    const groundBody = new CANNON.Body({ type: CANNON.Body.STATIC, shape: new CANNON.Plane(), material: defaultMaterial });
     groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
     groundBody.position.y = -1.2;
     world.addBody(groundBody);
+
+    // Invisible walls
+    const wallSize = 6;
+    const wallHeight = 10;
+    const wallThickness = 0.5;
+    const wallShapeX = new CANNON.Box(new CANNON.Vec3(wallThickness, wallHeight, wallSize));
+    const wallShapeZ = new CANNON.Box(new CANNON.Vec3(wallSize, wallHeight, wallThickness));
+
+    const walls = [
+      { shape: wallShapeX, pos: [-wallSize, wallHeight / 2 - 1.2, 0] },
+      { shape: wallShapeX, pos: [wallSize, wallHeight / 2 - 1.2, 0] },
+      { shape: wallShapeZ, pos: [0, wallHeight / 2 - 1.2, -wallSize] },
+      { shape: wallShapeZ, pos: [0, wallHeight / 2 - 1.2, wallSize] },
+    ];
+    walls.forEach(({ shape, pos }) => {
+      const wall = new CANNON.Body({ type: CANNON.Body.STATIC, material: defaultMaterial });
+      wall.addShape(shape);
+      wall.position.set(pos[0], pos[1], pos[2]);
+      world.addBody(wall);
+    });
 
     // Grid
     const grid = new THREE.GridHelper(30, 30, 0x221010, 0x1a0a0a);
@@ -242,7 +270,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
     (grid.material as THREE.Material).transparent = true;
     scene.add(grid);
 
-    // Helper to create thick edges
+    // Helper functions
     function createThickEdges(geometry: THREE.BufferGeometry, color: number, lineWidth: number, thresholdAngle = 1): Line2 {
       const edges = new THREE.EdgesGeometry(geometry, thresholdAngle);
       const posAttr = edges.attributes.position;
@@ -263,197 +291,367 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
       return new Line2(lineGeo, lineMat);
     }
 
-    // Sphere
-    const sphereRadius = 1.1;
-    const sphereGeo = new THREE.SphereGeometry(sphereRadius, 24, 16);
-    const sphere = new THREE.Mesh(
-      sphereGeo,
-      new THREE.MeshStandardMaterial({
-        color: 0x442a2a,
-        roughness: 0.65,
-        metalness: 0.15,
-      })
-    );
-    sphere.castShadow = true;
-    sphere.scale.setScalar(0.5); // Start small
-    scene.add(sphere);
+    function createLabel(name: string, size: string): CSS2DObject {
+      const div = document.createElement("div");
+      div.style.cssText = `
+        background: rgba(0, 0, 0, 0.7);
+        border: 2px solid #ff0000;
+        padding: 4px 8px;
+        font: 12px ui-monospace, monospace;
+        color: #ffffff;
+        white-space: nowrap;
+        pointer-events: none;
+      `;
+      div.innerHTML = `<div style="color: #ff6666">${name}</div><div style="color: #888">${size}</div>`;
+      const label = new CSS2DObject(div);
+      label.position.set(1.2, 1.2, 0);
+      return label;
+    }
 
-    // Sphere physics
-    const sphereBody = new CANNON.Body({
-      mass: 1,
-      shape: new CANNON.Sphere(sphereRadius),
-      material: defaultMaterial,
-      linearDamping: 0.3,
-      angularDamping: 0.3,
-    });
-    sphereBody.position.set(-3, 8, 2); // Start high
-    sphereBody.velocity.set(2, 0, -2); // Parabolic trajectory
-    sphereBody.angularFactor.set(0, 1, 0); // Only rotate around Y axis
-    world.addBody(sphereBody);
+    // All scene objects
+    const sceneObjects: SceneObject[] = [];
+    const SPHERE_RADIUS = 1.1;
+    const DIAMOND_RADIUS = 1.0;
 
-    // Sphere edges
-    const sphereEdges = createThickEdges(sphereGeo, 0xff0000, 4, 1);
-    scene.add(sphereEdges);
+    // Create sphere helper
+    function createSphere(scale: number, position: THREE.Vector3, velocity: THREE.Vector3, hasLabel = false, labelName = "", labelSize = ""): SceneObject {
+      const geo = new THREE.SphereGeometry(SPHERE_RADIUS * scale, scale > 0.5 ? 24 : 16, scale > 0.5 ? 16 : 12);
+      const mesh = new THREE.Mesh(
+        geo,
+        new THREE.MeshStandardMaterial({ color: 0x442a2a, roughness: 0.65, metalness: 0.15 })
+      );
+      mesh.castShadow = true;
 
-    // Sphere label
-    const sphereLabel = createLabel("Photos", "2GB");
-    sphere.add(sphereLabel);
+      const body = new CANNON.Body({
+        mass: scale,
+        shape: new CANNON.Sphere(SPHERE_RADIUS * scale),
+        material: defaultMaterial,
+        linearDamping: 0.3,
+        angularDamping: 0.3,
+      });
+      body.position.set(position.x, position.y, position.z);
+      body.velocity.set(velocity.x, velocity.y, velocity.z);
+      body.angularFactor.set(0, 1, 0);
 
-    // Diamond
-    const diamondRadius = 1.0;
-    const diamondGeo = new THREE.OctahedronGeometry(diamondRadius, 0);
-    const diamond = new THREE.Mesh(
-      diamondGeo,
-      new THREE.MeshStandardMaterial({
-        color: 0x4a2020,
-        roughness: 0.35,
-        metalness: 0.25,
-        emissive: 0x200505,
-        emissiveIntensity: 0.35,
-      })
-    );
-    diamond.castShadow = true;
-    diamond.scale.set(0.35, 0.5, 0.35); // Start small, narrower on X/Z
-    scene.add(diamond);
+      const edges = createThickEdges(geo, 0xff0000, scale > 0.5 ? 4 : 3, 1);
 
-    // Diamond physics (larger sphere to account for pointed bottom)
-    const diamondBody = new CANNON.Body({
-      mass: 1,
-      shape: new CANNON.Sphere(diamondRadius * 1.2),
-      material: defaultMaterial,
-      linearDamping: 0.3,
-      angularDamping: 0.0, // No angular damping so it keeps spinning
-    });
-    diamondBody.position.set(3, 6, -3); // Start high
-    diamondBody.velocity.set(-2, 2, 2); // Parabolic trajectory (upward arc)
-    diamondBody.angularFactor.set(0, 1, 0); // Only rotate around Y axis
-    world.addBody(diamondBody);
+      if (hasLabel) {
+        mesh.add(createLabel(labelName, labelSize));
+      }
 
-    // Diamond edges
-    const diamondEdges = createThickEdges(diamondGeo, 0xff0000, 4, 1);
-    diamondEdges.scale.set(0.35, 0.5, 0.35); // Start small like diamond
-    scene.add(diamondEdges);
+      scene.add(mesh);
+      scene.add(edges);
+      world.addBody(body);
 
-    // Diamond label
-    const diamondLabel = createLabel("Archive.zip", "1GB");
-    diamond.add(diamondLabel);
+      const obj: SceneObject = {
+        id: generateId(),
+        mesh,
+        body,
+        edges,
+        type: "sphere",
+        scale,
+        originalScale: new THREE.Vector3(1, 1, 1),
+        originalEmissive: 0x000000,
+        originalEmissiveIntensity: 0,
+        hasLabel,
+        labelName,
+        labelSize,
+      };
+      sceneObjects.push(obj);
+      return obj;
+    }
 
-    // Draggable objects
-    const draggables = [
-      { mesh: sphere, body: sphereBody, edges: sphereEdges },
-      { mesh: diamond, body: diamondBody, edges: diamondEdges },
-    ];
+    // Create diamond helper
+    function createDiamond(scale: number, position: THREE.Vector3, velocity: THREE.Vector3, hasLabel = false, labelName = "", labelSize = ""): SceneObject {
+      const geo = new THREE.OctahedronGeometry(DIAMOND_RADIUS * scale, 0);
+      const mesh = new THREE.Mesh(
+        geo,
+        new THREE.MeshStandardMaterial({
+          color: 0x4a2020,
+          roughness: 0.35,
+          metalness: 0.25,
+          emissive: 0x200505,
+          emissiveIntensity: 0.35,
+        })
+      );
+      mesh.castShadow = true;
+      mesh.scale.set(0.7, 1, 0.7);
 
-    // Raycaster for mouse picking
+      const body = new CANNON.Body({
+        mass: scale,
+        shape: new CANNON.Sphere(DIAMOND_RADIUS * scale * 1.2),
+        material: defaultMaterial,
+        linearDamping: 0.3,
+        angularDamping: 0.0,
+      });
+      body.position.set(position.x, position.y, position.z);
+      body.velocity.set(velocity.x, velocity.y, velocity.z);
+      body.angularFactor.set(0, 1, 0);
+
+      const edges = createThickEdges(geo, 0xff0000, scale > 0.5 ? 4 : 3, 1);
+      edges.scale.set(0.7, 1, 0.7);
+
+      if (hasLabel) {
+        mesh.add(createLabel(labelName, labelSize));
+      }
+
+      scene.add(mesh);
+      scene.add(edges);
+      world.addBody(body);
+
+      const obj: SceneObject = {
+        id: generateId(),
+        mesh,
+        body,
+        edges,
+        type: "diamond",
+        scale,
+        originalScale: new THREE.Vector3(0.7, 1, 0.7),
+        originalEmissive: 0x200505,
+        originalEmissiveIntensity: 0.35,
+        hasLabel,
+        labelName,
+        labelSize,
+      };
+      sceneObjects.push(obj);
+      return obj;
+    }
+
+    // Remove object from scene
+    function removeObject(obj: SceneObject) {
+      const idx = sceneObjects.indexOf(obj);
+      if (idx !== -1) sceneObjects.splice(idx, 1);
+      scene.remove(obj.mesh);
+      scene.remove(obj.edges);
+      world.removeBody(obj.body);
+      obj.mesh.geometry.dispose();
+      (obj.mesh.material as THREE.Material).dispose();
+    }
+
+    // Convert scene objects to serializable data
+    function objectsToData(): ObjectData[] {
+      return sceneObjects
+        .filter(obj => !obj.isExiting)
+        .map(obj => ({
+          id: obj.id,
+          type: obj.type,
+          scale: obj.scale,
+          position: [obj.body.position.x, obj.body.position.y, obj.body.position.z] as [number, number, number],
+          velocity: [obj.body.velocity.x, obj.body.velocity.y, obj.body.velocity.z] as [number, number, number],
+          hasLabel: obj.hasLabel,
+          labelName: obj.labelName,
+          labelSize: obj.labelSize,
+        }));
+    }
+
+    // Restore objects from data
+    function restoreFromData(data: ObjectData[]) {
+      // Remove all current objects
+      while (sceneObjects.length > 0) {
+        removeObject(sceneObjects[0]);
+      }
+
+      // Create objects from data
+      for (const d of data) {
+        const pos = new THREE.Vector3(d.position[0], d.position[1], d.position[2]);
+        const vel = new THREE.Vector3(d.velocity[0], d.velocity[1], d.velocity[2]);
+        if (d.type === "sphere") {
+          createSphere(d.scale, pos, vel, d.hasLabel, d.labelName, d.labelSize);
+        } else {
+          createDiamond(d.scale, pos, vel, d.hasLabel, d.labelName, d.labelSize);
+        }
+      }
+    }
+
+    // Exit animations (scale up and fade out)
+    let exitAnims: ExitAnim[] = [];
+
+    // Navigate into a sphere - old objects exit, new ones spawn
+    function navigateInto() {
+      // Save current state to history
+      const currentData = objectsToData();
+      pushState(currentData);
+
+      // Mark all current objects as exiting and start exit animation
+      const now = performance.now();
+      for (const obj of sceneObjects) {
+        if (!obj.isExiting) {
+          obj.isExiting = true;
+          // Disable physics
+          obj.body.type = CANNON.Body.STATIC;
+          obj.body.velocity.set(0, 0, 0);
+          obj.body.angularVelocity.set(0, 0, 0);
+
+          exitAnims.push({
+            obj,
+            startScale: obj.mesh.scale.clone(),
+            startTime: now,
+            duration: 400,
+          });
+        }
+      }
+
+      // Spawn new objects after a short delay
+      setTimeout(() => {
+        const count = 2 + Math.floor(Math.random() * 2);
+        for (let i = 0; i < count; i++) {
+          const isSphere = Math.random() > 0.4; // Slightly more spheres
+          const scale = 0.6 + Math.random() * 0.4;
+          const angle = (i / count) * Math.PI * 2 + Math.random() * 0.3;
+          const radius = 1 + Math.random() * 2;
+
+          const spawnPos = new THREE.Vector3(
+            Math.cos(angle) * radius,
+            6 + Math.random() * 2,
+            Math.sin(angle) * radius
+          );
+          const spawnVel = new THREE.Vector3(
+            (Math.random() - 0.5) * 2,
+            -2,
+            (Math.random() - 0.5) * 2
+          );
+
+          if (isSphere) {
+            createSphere(scale, spawnPos, spawnVel);
+          } else {
+            createDiamond(scale, spawnPos, spawnVel);
+          }
+        }
+      }, 200);
+    }
+
+    // Go back to previous state
+    function navigateBack() {
+      const previousData = goBack();
+      if (previousData) {
+        // Exit current objects quickly
+        const now = performance.now();
+        for (const obj of sceneObjects) {
+          if (!obj.isExiting) {
+            obj.isExiting = true;
+            obj.body.type = CANNON.Body.STATIC;
+            obj.body.velocity.set(0, 0, 0);
+            exitAnims.push({
+              obj,
+              startScale: obj.mesh.scale.clone(),
+              startTime: now,
+              duration: 300,
+            });
+          }
+        }
+
+        // Restore after exit animation
+        setTimeout(() => {
+          restoreFromData(previousData);
+        }, 150);
+      }
+    }
+
+    // Store ref for external access
+    sceneRef.current = { scene, world, sceneObjects, createSphere, createDiamond, removeObject, exitAnims };
+    navigateBackRef.current = navigateBack;
+
+    // Initial objects
+    createSphere(1, new THREE.Vector3(-2, 6, 1), new THREE.Vector3(1, 0, -1), true, "Photos", "2GB");
+    createDiamond(1, new THREE.Vector3(2, 5, -1), new THREE.Vector3(-1, 1, 1), true, "Archive.zip", "1GB");
+
+    // Save initial state
+    pushState(objectsToData());
+
+    // Interaction state
     const raycaster = new THREE.Raycaster();
     const mouse = new THREE.Vector2();
     const dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
     const intersection = new THREE.Vector3();
-    let draggedObject: typeof draggables[0] | null = null;
+    let draggedObject: SceneObject | null = null;
     let dragConstraint: CANNON.PointToPointConstraint | null = null;
 
-    // Invisible body for mouse constraint
     const mouseBody = new CANNON.Body({ mass: 0 });
     world.addBody(mouseBody);
 
-    // Store original scales for restoring after drag
-    const originalScales = new Map<THREE.Mesh, THREE.Vector3>();
-    originalScales.set(sphere, new THREE.Vector3(1, 1, 1));
-    originalScales.set(diamond, new THREE.Vector3(0.7, 1, 0.7));
-
-    // Scale animation state
-    type ScaleAnim = {
-      mesh: THREE.Mesh;
-      edges: Line2;
-      startScale: THREE.Vector3;
-      endScale: THREE.Vector3;
-      startTime: number;
-      duration: number;
-    };
+    // Scale animations
+    type ScaleAnim = { obj: SceneObject; startScale: THREE.Vector3; endScale: THREE.Vector3; startTime: number; duration: number };
     let scaleAnims: ScaleAnim[] = [];
 
-    // Bounce easing function
     function easeOutBounce(x: number): number {
-      const n1 = 7.5625;
-      const d1 = 2.75;
-      if (x < 1 / d1) {
-        return n1 * x * x;
-      } else if (x < 2 / d1) {
-        return n1 * (x -= 1.5 / d1) * x + 0.75;
-      } else if (x < 2.5 / d1) {
-        return n1 * (x -= 2.25 / d1) * x + 0.9375;
-      } else {
-        return n1 * (x -= 2.625 / d1) * x + 0.984375;
-      }
+      const n1 = 7.5625, d1 = 2.75;
+      if (x < 1 / d1) return n1 * x * x;
+      if (x < 2 / d1) return n1 * (x -= 1.5 / d1) * x + 0.75;
+      if (x < 2.5 / d1) return n1 * (x -= 2.25 / d1) * x + 0.9375;
+      return n1 * (x -= 2.625 / d1) * x + 0.984375;
     }
 
-    function startScaleAnim(obj: typeof draggables[0], toScale: THREE.Vector3, duration = 300) {
-      // Remove existing anim for this mesh
-      scaleAnims = scaleAnims.filter(a => a.mesh !== obj.mesh);
-      scaleAnims.push({
-        mesh: obj.mesh,
-        edges: obj.edges,
-        startScale: obj.mesh.scale.clone(),
-        endScale: toScale.clone(),
-        startTime: performance.now(),
-        duration,
-      });
+    function easeOutCubic(x: number): number {
+      return 1 - Math.pow(1 - x, 3);
     }
 
+    function startScaleAnim(obj: SceneObject, toScale: THREE.Vector3, duration = 300) {
+      scaleAnims = scaleAnims.filter(a => a.obj !== obj);
+      scaleAnims.push({ obj, startScale: obj.mesh.scale.clone(), endScale: toScale.clone(), startTime: performance.now(), duration });
+    }
+
+    // Mouse handlers
     function onMouseDown(event: MouseEvent) {
       mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
       mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
 
       raycaster.setFromCamera(mouse, camera);
-      const meshes = draggables.map(d => d.mesh);
+      const meshes = sceneObjects.filter(o => !o.isExiting).map(o => o.mesh);
       const intersects = raycaster.intersectObjects(meshes);
 
       if (intersects.length > 0) {
         controls.enabled = false;
         const hitMesh = intersects[0].object;
-        draggedObject = draggables.find(d => d.mesh === hitMesh) || null;
+        const hitObj = sceneObjects.find(o => o.mesh === hitMesh);
 
-        if (draggedObject) {
-          // Animate to bigger scale with bounce
-          const origScale = originalScales.get(draggedObject.mesh)!;
-          const bigScale = origScale.clone().multiplyScalar(1.3);
-          startScaleAnim(draggedObject, bigScale, 400);
+        if (hitObj && !hitObj.isExiting) {
+          draggedObject = hitObj;
 
-          // Make brighter red with glow
-          const mat = draggedObject.mesh.material as THREE.MeshStandardMaterial;
+          // Scale up for dragging
+          const bigScale = hitObj.originalScale.clone().multiplyScalar(1.3);
+          startScaleAnim(hitObj, bigScale, 400);
+
+          // Glow
+          const mat = hitObj.mesh.material as THREE.MeshStandardMaterial;
           mat.emissive.setHex(0xff0000);
-          mat.emissiveIntensity = 2.0;
-
-          // Add to bloom layer for selective glow
-          draggedObject.mesh.layers.enable(BLOOM_LAYER);
-          draggedObject.edges.layers.enable(BLOOM_LAYER);
+          mat.emissiveIntensity = 3.5;
+          hitObj.mesh.layers.enable(BLOOM_LAYER);
+          hitObj.edges.layers.enable(BLOOM_LAYER);
           bloomActive = true;
 
-          // Set drag plane at object height
-          dragPlane.constant = -draggedObject.body.position.y;
-
-          // Create constraint
+          // Drag constraint
+          dragPlane.constant = -hitObj.body.position.y;
           const hitPoint = intersects[0].point;
           mouseBody.position.set(hitPoint.x, hitPoint.y, hitPoint.z);
-
-          dragConstraint = new CANNON.PointToPointConstraint(
-            draggedObject.body,
-            new CANNON.Vec3(0, 0, 0),
-            mouseBody,
-            new CANNON.Vec3(0, 0, 0),
-            50 // force
-          );
+          dragConstraint = new CANNON.PointToPointConstraint(hitObj.body, new CANNON.Vec3(0, 0, 0), mouseBody, new CANNON.Vec3(0, 0, 0), 50);
           world.addConstraint(dragConstraint);
+        }
+      }
+    }
+
+    // Double-click to navigate into spheres
+    function onDoubleClick(event: MouseEvent) {
+      mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+      mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+      raycaster.setFromCamera(mouse, camera);
+      const meshes = sceneObjects.filter(o => !o.isExiting).map(o => o.mesh);
+      const intersects = raycaster.intersectObjects(meshes);
+
+      if (intersects.length > 0) {
+        const hitMesh = intersects[0].object;
+        const hitObj = sceneObjects.find(o => o.mesh === hitMesh);
+
+        if (hitObj && !hitObj.isExiting && hitObj.type === "sphere") {
+          navigateInto();
         }
       }
     }
 
     function onMouseMove(event: MouseEvent) {
       if (!draggedObject || !dragConstraint) return;
-
       mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
       mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
-
       raycaster.setFromCamera(mouse, camera);
       if (raycaster.ray.intersectPlane(dragPlane, intersection)) {
         mouseBody.position.set(intersection.x, intersection.y, intersection.z);
@@ -462,21 +660,10 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
 
     function onMouseUp() {
       if (draggedObject) {
-        // Animate back to original scale with bounce
-        const origScale = originalScales.get(draggedObject.mesh)!;
-        startScaleAnim(draggedObject, origScale, 400);
-
-        // Restore original emissive and disable glow
+        startScaleAnim(draggedObject, draggedObject.originalScale, 400);
         const mat = draggedObject.mesh.material as THREE.MeshStandardMaterial;
-        if (draggedObject.mesh === diamond) {
-          mat.emissive.setHex(0x200505);
-          mat.emissiveIntensity = 0.35;
-        } else {
-          mat.emissive.setHex(0x000000);
-          mat.emissiveIntensity = 0;
-        }
-
-        // Remove from bloom layer
+        mat.emissive.setHex(draggedObject.originalEmissive);
+        mat.emissiveIntensity = draggedObject.originalEmissiveIntensity;
         draggedObject.mesh.layers.disable(BLOOM_LAYER);
         draggedObject.edges.layers.disable(BLOOM_LAYER);
         bloomActive = false;
@@ -489,16 +676,24 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
       controls.enabled = true;
     }
 
+    // Keyboard handler for back navigation
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" || event.key === "Backspace") {
+        event.preventDefault();
+        navigateBack();
+      }
+    }
+
     renderer.domElement.addEventListener("mousedown", onMouseDown);
     renderer.domElement.addEventListener("mousemove", onMouseMove);
     renderer.domElement.addEventListener("mouseup", onMouseUp);
     renderer.domElement.addEventListener("mouseleave", onMouseUp);
+    renderer.domElement.addEventListener("dblclick", onDoubleClick);
+    window.addEventListener("keydown", onKeyDown);
 
-    // Selective bloom setup
+    // Bloom setup
     const bloomLayer = new THREE.Layers();
     bloomLayer.set(BLOOM_LAYER);
-
-    // Materials cache for darkening non-bloom objects
     const darkMaterial = new THREE.MeshBasicMaterial({ color: 0x000000 });
     const materials: Map<string, THREE.Material | THREE.Material[]> = new Map();
 
@@ -521,20 +716,13 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
       }
     }
 
-    // Bloom composer (renders only bloom layer objects)
     const renderScene = new RenderPass(scene, camera);
-    const bloomPass = new UnrealBloomPass(
-      new THREE.Vector2(window.innerWidth, window.innerHeight),
-      1.5, // strength
-      0.6, // radius
-      0.1 // threshold (low to catch emissive)
-    );
+    const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 3.0, 0.15, 0.0);
     const bloomComposer = new EffectComposer(renderer);
     bloomComposer.renderToScreen = false;
     bloomComposer.addPass(renderScene);
     bloomComposer.addPass(bloomPass);
 
-    // Shader to blend bloom with scene
     const BlendShader = {
       uniforms: {
         tDiffuse: { value: null },
@@ -543,10 +731,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
       },
       vertexShader: /* glsl */ `
         varying vec2 vUv;
-        void main() {
-          vUv = uv;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }
+        void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
       `,
       fragmentShader: /* glsl */ `
         uniform sampler2D tDiffuse;
@@ -561,7 +746,6 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
       `,
     };
 
-    // Final composer
     const composer = new EffectComposer(renderer);
     composer.addPass(new RenderPass(scene, camera));
     const blendPass = new ShaderPass(BlendShader);
@@ -572,23 +756,19 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
     composer.addPass(ditherPass);
     ditherPassRef.current = ditherPass;
 
-    // Track if bloom is active
     let bloomActive = false;
 
-    // Animation
+    // Animation loop
     const clock = new THREE.Clock();
     let animationId: number;
-    const introStartTime = performance.now();
-    const introDuration = 1500; // 1.5 seconds for scale animation
-    let introComplete = false;
 
     function animate() {
       animationId = requestAnimationFrame(animate);
       const delta = clock.getDelta();
-
-      // FPS counter
-      frameCount++;
       const now = performance.now();
+
+      // FPS
+      frameCount++;
       if (now - lastFpsUpdate >= 1000) {
         currentFps = frameCount;
         frameCount = 0;
@@ -596,74 +776,55 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
         fpsDiv.textContent = `${currentFps} FPS`;
       }
 
-      // Intro scale animation (skip if object is being dragged)
-      const elapsed = performance.now() - introStartTime;
-      const sphereDragged = draggedObject?.mesh === sphere;
-      const diamondDragged = draggedObject?.mesh === diamond;
+      // Exit animations (scale up to 10x and remove)
+      exitAnims = exitAnims.filter(anim => {
+        const t = Math.min((now - anim.startTime) / anim.duration, 1);
+        const eased = easeOutCubic(t);
+        const targetScale = 10;
+        const newScale = anim.startScale.clone().multiplyScalar(1 + (targetScale - 1) * eased);
+        anim.obj.mesh.scale.copy(newScale);
+        anim.obj.edges.scale.copy(newScale);
 
-      if (elapsed < introDuration) {
-        const t = elapsed / introDuration;
-        // Ease out cubic
-        const eased = 1 - Math.pow(1 - t, 3);
-        if (!sphereDragged) {
-          const sphereScale = 0.5 + 0.5 * eased;
-          sphere.scale.setScalar(sphereScale);
-          sphereEdges.scale.setScalar(sphereScale);
-          originalScales.set(sphere, new THREE.Vector3(1, 1, 1));
-        }
-        if (!diamondDragged) {
-          const diamondScaleXZ = 0.35 + 0.35 * eased;
-          const diamondScaleY = 0.5 + 0.5 * eased;
-          diamond.scale.set(diamondScaleXZ, diamondScaleY, diamondScaleXZ);
-          diamondEdges.scale.set(diamondScaleXZ, diamondScaleY, diamondScaleXZ);
-          originalScales.set(diamond, new THREE.Vector3(0.7, 1, 0.7));
-        }
-      } else if (!introComplete) {
-        introComplete = true;
-        originalScales.set(sphere, new THREE.Vector3(1, 1, 1));
-        originalScales.set(diamond, new THREE.Vector3(0.7, 1, 0.7));
-        if (!sphereDragged) {
-          sphere.scale.setScalar(1);
-          sphereEdges.scale.setScalar(1);
-        }
-        if (!diamondDragged) {
-          diamond.scale.set(0.7, 1, 0.7);
-          diamondEdges.scale.set(0.7, 1, 0.7);
-        }
-      }
+        // Fade out material
+        const mat = anim.obj.mesh.material as THREE.MeshStandardMaterial;
+        mat.opacity = 1 - eased;
+        mat.transparent = true;
 
-      // Update scale animations
-      scaleAnims = scaleAnims.filter(anim => {
-        const animElapsed = now - anim.startTime;
-        const t = Math.min(animElapsed / anim.duration, 1);
-        const eased = easeOutBounce(t);
-
-        const newScale = new THREE.Vector3().lerpVectors(anim.startScale, anim.endScale, eased);
-        anim.mesh.scale.copy(newScale);
-        anim.edges.scale.copy(newScale);
-
-        return t < 1; // Keep animation if not done
+        if (t >= 1) {
+          removeObject(anim.obj);
+          return false;
+        }
+        return true;
       });
 
-      // Step physics (more substeps for fast falling objects)
+      // Scale animations
+      scaleAnims = scaleAnims.filter(anim => {
+        if (anim.obj.isExiting) return false;
+        const t = Math.min((now - anim.startTime) / anim.duration, 1);
+        const eased = easeOutBounce(t);
+        const newScale = new THREE.Vector3().lerpVectors(anim.startScale, anim.endScale, eased);
+        anim.obj.mesh.scale.copy(newScale);
+        anim.obj.edges.scale.copy(newScale);
+        return t < 1;
+      });
+
+      // Physics
       world.step(1 / 120, delta, 10);
 
-      // Sync Three.js with physics
-      sphere.position.copy(sphereBody.position as unknown as THREE.Vector3);
-      sphere.quaternion.copy(sphereBody.quaternion as unknown as THREE.Quaternion);
-      sphereEdges.position.copy(sphere.position);
-      sphereEdges.quaternion.copy(sphere.quaternion);
-
-      diamond.position.copy(diamondBody.position as unknown as THREE.Vector3);
-      diamond.quaternion.copy(diamondBody.quaternion as unknown as THREE.Quaternion);
-      diamondEdges.position.copy(diamond.position);
-      diamondEdges.quaternion.copy(diamond.quaternion);
+      // Sync all objects
+      for (const obj of sceneObjects) {
+        if (!obj.isExiting) {
+          obj.mesh.position.copy(obj.body.position as unknown as THREE.Vector3);
+          obj.mesh.quaternion.copy(obj.body.quaternion as unknown as THREE.Quaternion);
+        }
+        obj.edges.position.copy(obj.mesh.position);
+        obj.edges.quaternion.copy(obj.mesh.quaternion);
+      }
 
       controls.update();
 
-      // Selective bloom rendering
+      // Bloom
       if (bloomActive) {
-        // Darken non-bloom objects and render bloom pass
         scene.traverse(darkenNonBloomed);
         bloomComposer.render();
         scene.traverse(restoreMaterial);
@@ -672,13 +833,12 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
         blendPass.uniforms.bloomIntensity.value = 0.0;
       }
 
-      // Render main scene with blended bloom
       composer.render();
       labelRenderer.render(scene, camera);
     }
     animate();
 
-    // Resize handler
+    // Resize
     function handleResize() {
       renderer.setSize(window.innerWidth, window.innerHeight);
       labelRenderer.setSize(window.innerWidth, window.innerHeight);
@@ -695,19 +855,27 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
     return () => {
       cancelAnimationFrame(animationId);
       window.removeEventListener("resize", handleResize);
+      window.removeEventListener("keydown", onKeyDown);
       renderer.domElement.removeEventListener("mousedown", onMouseDown);
       renderer.domElement.removeEventListener("mousemove", onMouseMove);
       renderer.domElement.removeEventListener("mouseup", onMouseUp);
       renderer.domElement.removeEventListener("mouseleave", onMouseUp);
+      renderer.domElement.removeEventListener("dblclick", onDoubleClick);
+      for (const obj of sceneObjects) {
+        scene.remove(obj.mesh);
+        scene.remove(obj.edges);
+        world.removeBody(obj.body);
+      }
       controls.dispose();
       renderer.dispose();
-      containerRef.current?.removeChild(renderer.domElement);
-      containerRef.current?.removeChild(labelRenderer.domElement);
-      containerRef.current?.removeChild(fpsDiv);
+      container.removeChild(renderer.domElement);
+      container.removeChild(labelRenderer.domElement);
+      container.removeChild(fpsDiv);
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onRendererReady]);
 
-  // Update shader uniforms when settings change
+  // Update shader uniforms
   useEffect(() => {
     if (ditherPassRef.current) {
       ditherPassRef.current.uniforms.pixelSize.value = settings.pixel_size;
@@ -717,5 +885,42 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
     }
   }, [settings]);
 
-  return <div ref={containerRef} style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%" }} />;
+  const handleBack = () => {
+    if (navigateBackRef.current && canGoBack) {
+      navigateBackRef.current();
+    }
+  };
+
+  return (
+    <>
+      <div ref={containerRef} style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%" }} />
+      {canGoBack && (
+        <button
+          onClick={handleBack}
+          style={{
+            position: "absolute",
+            top: 12,
+            right: 12,
+            background: "rgba(0, 0, 0, 0.7)",
+            border: "2px solid #ff0000",
+            padding: "8px 16px",
+            font: "14px ui-monospace, monospace",
+            color: "#ff6666",
+            cursor: "pointer",
+            zIndex: 100,
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = "rgba(255, 0, 0, 0.2)";
+            e.currentTarget.style.color = "#ffffff";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = "rgba(0, 0, 0, 0.7)";
+            e.currentTarget.style.color = "#ff6666";
+          }}
+        >
+          ← Back
+        </button>
+      )}
+    </>
+  );
 }

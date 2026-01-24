@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import RetroScene from "./components/RetroScene";
-import ControlPanel from "./components/ControlPanel";
+// import ControlPanel from "./components/ControlPanel";
 import { DEFAULT_SETTINGS, type Settings } from "./types";
 import "./App.css";
 
@@ -26,7 +26,7 @@ function App() {
     }
   }, []);
 
-  const handleSave = useCallback(async () => {
+  /* const handleSave = useCallback(async () => {
     if (!isTauri) return;
     try {
       await invokeCommand("save_settings", { settings });
@@ -67,7 +67,7 @@ function App() {
     } catch (err) {
       console.error("Failed to save screenshot:", err);
     }
-  }, []);
+  }, []); */
 
   const handleRendererReady = useCallback((renderer: THREE.WebGLRenderer) => {
     rendererRef.current = renderer;
@@ -76,14 +76,14 @@ function App() {
   return (
     <div className="app">
       <RetroScene settings={settings} onRendererReady={handleRendererReady} />
-      <ControlPanel
+{/* <ControlPanel
         settings={settings}
         onChange={setSettings}
         onSave={handleSave}
         onLoad={handleLoad}
         onReset={handleReset}
         onScreenshot={handleScreenshot}
-      />
+      /> */}
       <div className="hint">Drag to orbit. Wheel to zoom.</div>
     </div>
   );
