@@ -2,122 +2,47 @@ import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import * as CANNON from "cannon-es";
 import { invoke } from "@tauri-apps/api/core";
-import * as Tone from "tone";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
-import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
-import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
-import { Line2 } from "three/examples/jsm/lines/Line2.js";
-import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { CSS2DRenderer, CSS2DObject } from "three/examples/jsm/renderers/CSS2DRenderer.js";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader.js";
 import { useSceneStore, type FileEntry } from "../store/sceneStore";
 import type { Settings } from "../types";
+import RetroSceneOverlays from "./retroScene/Overlays";
+import { createLoadingOverlay, createFpsCounter } from "./retroScene/dom";
+import { createThickEdges } from "./retroScene/geometry";
+import { updateLabelFontSizes } from "./retroScene/labels";
+import { createFogShader, createInfiniteGridShader } from "./retroScene/shaders";
+import { diskMaxScale } from "./retroScene/sizing";
+import { BLOOM_LAYER } from "./retroScene/constants";
+import { createRenderPipeline } from "./retroScene/renderPipeline";
+import { createSpawnFactory, type DiskInfo } from "./retroScene/spawn";
 
-type DiskInfo = {
-  name: string;
-  path: string;
-  total_space: number;
-  available_space: number;
-};
+// Animation modules
+import type { SceneObject, ExitAnim, ScaleAnim, Particle } from "../animations/types";
+// Easing functions are used by imported animation modules
+import { spawnClickParticles, updateClickParticles } from "../animations/particles";
+import { startScaleAnim, updateScaleAnimations } from "../animations/scale-animation";
+import { exitCurrentObjects, updateExitAnimations } from "../animations/exit-animation";
+import { loadMechaAnimation } from "../animations/mecha-animation";
+import { isFlightModeActive } from "../animations/flight-mode";
+import {
+  initSoundSystem,
+  ensureAudio,
+  playPickup,
+  playDrop,
+  playNavigateIn,
+  playNavigateBack,
+  playSpawn,
+  playLand,
+} from "../animations/sound-effects";
 
-const BLOOM_LAYER = 1;
 
 interface RetroSceneProps {
   settings: Settings;
   onRendererReady?: (renderer: THREE.WebGLRenderer) => void;
 }
 
-type SceneObject = {
-  id: string;
-  mesh: THREE.Mesh;
-  body: CANNON.Body;
-  edges: Line2;
-  type: "sphere" | "diamond";
-  scale: number;
-  originalScale: THREE.Vector3;
-  originalEmissive: number;
-  originalEmissiveIntensity: number;
-  filePath: string;
-  fileName: string;
-  fileSize: string;
-  isDir: boolean;
-  isDisk?: boolean;
-  isExiting?: boolean;
-};
-
-// Format bytes to human readable
-function formatSize(bytes: number): string {
-  const KB = 1024;
-  const MB = KB * 1024;
-  const GB = MB * 1024;
-  const TB = GB * 1024;
-
-  if (bytes >= TB) return `${(bytes / TB).toFixed(1)} TB`;
-  if (bytes >= GB) return `${(bytes / GB).toFixed(1)} GB`;
-  if (bytes >= MB) return `${(bytes / MB).toFixed(1)} MB`;
-  if (bytes >= KB) return `${(bytes / KB).toFixed(1)} KB`;
-  return `${bytes} B`;
-}
-
-const DitherPixelShader = {
-  uniforms: {
-    tDiffuse: { value: null },
-    resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
-    pixelSize: { value: 3.0 },
-    ditherStrength: { value: 0.85 },
-    gloom: { value: 0.12 },
-    contrast: { value: 1.15 },
-  },
-  vertexShader: /* glsl */ `
-    varying vec2 vUv;
-    void main() {
-      vUv = uv;
-      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-    }
-  `,
-  fragmentShader: /* glsl */ `
-    uniform sampler2D tDiffuse;
-    uniform vec2 resolution;
-    uniform float pixelSize;
-    uniform float ditherStrength;
-    uniform float gloom;
-    uniform float contrast;
-    varying vec2 vUv;
-
-    float bayer4(vec2 p) {
-      vec2 P = floor(mod(p, 4.0));
-      float a = mod(P.x + P.y * 2.0, 4.0);
-      float b = mod(P.x / 2.0 + P.y, 2.0);
-      return (a * 4.0 + b) / 16.0 + 0.03125;
-    }
-
-    vec3 applyContrast(vec3 c, float k) {
-      return (c - 0.5) * k + 0.5;
-    }
-
-    void main() {
-      vec2 fragCoord = vUv * resolution;
-      vec2 snapped = floor(fragCoord / pixelSize) * pixelSize;
-      vec2 uv2 = (snapped + 0.5) / resolution;
-
-      vec3 col = texture2D(tDiffuse, uv2).rgb;
-
-      col = applyContrast(col, contrast);
-      col *= (1.0 - gloom);
-
-      float t = bayer4(snapped / pixelSize);
-
-      float levels = 6.0;
-      vec3 q = floor(col * levels + (t - 0.5) * ditherStrength) / levels;
-
-      gl_FragColor = vec4(clamp(q, 0.0, 1.0), 1.0);
-    }
-  `,
-};
 
 let objectIdCounter = 0;
 function generateId() {
@@ -146,13 +71,6 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
   const [windowSize, setWindowSize] = useState({ width: window.innerWidth, height: window.innerHeight });
   const loadMechaRef = useRef<(() => void) | null>(null);
 
-  type ExitAnim = {
-    obj: SceneObject;
-    startScale: THREE.Vector3;
-    startTime: number;
-    duration: number;
-  };
-
   useEffect(() => {
     if (!containerRef.current) return;
     const container = containerRef.current;
@@ -174,146 +92,13 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
     rendererRef.current = renderer;
     onRendererReady?.(renderer);
 
-    // FPS counter
-    const fpsDiv = document.createElement("div");
-    fpsDiv.style.cssText = `
-      position: absolute;
-      top: 12px;
-      left: 12px;
-      color: #ff4444;
-      font: 14px ui-monospace, monospace;
-      z-index: 100;
-      pointer-events: none;
-    `;
-    container.appendChild(fpsDiv);
+    const fpsDiv = createFpsCounter(container);
+    const loadingOverlay = createLoadingOverlay(container);
+    const showLoading = () => loadingOverlay.show();
+    const hideLoading = () => loadingOverlay.hide();
 
-    // Loading overlay
-    const loadingOverlay = document.createElement("div");
-    loadingOverlay.style.cssText = `
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background: rgba(0, 0, 0, 0.7);
-      display: none;
-      justify-content: center;
-      align-items: center;
-      z-index: 200;
-    `;
-    const spinner = document.createElement("div");
-    spinner.style.cssText = `
-      width: 50px;
-      height: 50px;
-      border: 4px solid #333;
-      border-top: 4px solid #ff4444;
-      border-radius: 50%;
-      animation: spin 1s linear infinite;
-    `;
-    // Add keyframes for spinner and custom font
-    const style = document.createElement("style");
-    style.textContent = `
-      @font-face {
-        font-family: 'VCR OSD Mono';
-        src: url('/src/assets/VCR_OSD_MONO_1.001.ttf') format('truetype');
-        font-weight: normal;
-        font-style: normal;
-      }
-      @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-    `;
-    document.head.appendChild(style);
-    loadingOverlay.appendChild(spinner);
-    container.appendChild(loadingOverlay);
-
-    function showLoading() {
-      loadingOverlay.style.display = "flex";
-    }
-    function hideLoading() {
-      loadingOverlay.style.display = "none";
-    }
-
-    // Sound system - Cyberpunk/Tron style
-    const reverb = new Tone.Reverb({ decay: 1.5, wet: 0.3 }).toDestination();
-    const filter = new Tone.Filter(800, "lowpass").connect(reverb);
-
-    // Deep bass synth for main sounds
-    const bassSynth = new Tone.MonoSynth({
-      oscillator: { type: "sawtooth" },
-      envelope: { attack: 0.02, decay: 0.3, sustain: 0.2, release: 0.4 },
-      filterEnvelope: { attack: 0.01, decay: 0.2, sustain: 0.3, release: 0.3, baseFrequency: 200, octaves: 2 },
-      volume: -8,
-    }).connect(filter);
-
-    // Sub bass for impacts
-    const subBass = new Tone.MonoSynth({
-      oscillator: { type: "sine" },
-      envelope: { attack: 0.01, decay: 0.4, sustain: 0, release: 0.3 },
-      volume: -6,
-    }).connect(reverb);
-
-    // Glitchy high synth for accents
-    const glitchSynth = new Tone.MonoSynth({
-      oscillator: { type: "triangle" },
-      envelope: { attack: 0.005, decay: 0.1, sustain: 0, release: 0.1 },
-      filterEnvelope: { attack: 0.005, decay: 0.1, sustain: 0, release: 0.1, baseFrequency: 2000, octaves: -2 },
-      volume: -18,
-    }).connect(reverb);
-
-    // FM synth for digital sounds
-    const fmSynth = new Tone.FMSynth({
-      harmonicity: 3,
-      modulationIndex: 10,
-      oscillator: { type: "triangle" },
-      envelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.3 },
-      modulation: { type: "square" },
-      modulationEnvelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.2 },
-      volume: -22,
-    }).connect(filter);
-
-    let audioStarted = false;
-    async function ensureAudio() {
-      if (!audioStarted) {
-        await Tone.start();
-        audioStarted = true;
-      }
-    }
-
-    function playPickup() {
-      ensureAudio();
-      bassSynth.triggerAttackRelease("C2", 0.15);
-      glitchSynth.triggerAttackRelease("G4", 0.08, Tone.now() + 0.02);
-    }
-
-    function playDrop() {
-      ensureAudio();
-      subBass.triggerAttackRelease("E1", 0.25);
-      glitchSynth.triggerAttackRelease("C3", 0.1);
-    }
-
-    function playNavigateIn() {
-      ensureAudio();
-      fmSynth.triggerAttackRelease("C2", 0.2, Tone.now());
-      fmSynth.triggerAttackRelease("G2", 0.15, Tone.now() + 0.1);
-      glitchSynth.triggerAttackRelease("C4", 0.1, Tone.now() + 0.15);
-    }
-
-    function playNavigateBack() {
-      ensureAudio();
-      fmSynth.triggerAttackRelease("G2", 0.15, Tone.now());
-      fmSynth.triggerAttackRelease("C2", 0.2, Tone.now() + 0.1);
-      subBass.triggerAttackRelease("C1", 0.3, Tone.now() + 0.05);
-    }
-
-    function playSpawn() {
-      ensureAudio();
-      bassSynth.triggerAttackRelease("G1", 0.1);
-      glitchSynth.triggerAttackRelease("E5", 0.05, Tone.now() + 0.02);
-    }
-
-    function playLand() {
-      ensureAudio();
-      subBass.triggerAttackRelease("C1", 0.15);
-    }
+    // Initialize sound system from animation module
+    initSoundSystem();
 
     let frameCount = 0;
     let lastFpsUpdate = performance.now();
@@ -326,6 +111,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
     labelRenderer.domElement.style.top = "0";
     labelRenderer.domElement.style.left = "0";
     labelRenderer.domElement.style.pointerEvents = "none";
+    labelRenderer.domElement.id = "label-layer";
     container.appendChild(labelRenderer.domElement);
 
     // Scene
@@ -409,92 +195,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
     scene.add(plane);
 
     // Volumetric ground fog - multiple layers with gradient
-    const fogShader = {
-      uniforms: {
-        fogColor: { value: new THREE.Color(0x3a0808) },
-        time: { value: 0 },
-        layerHeight: { value: 0.0 },
-      },
-      vertexShader: /* glsl */ `
-        varying vec3 vWorldPosition;
-        varying vec2 vUv;
-        varying float vHeight;
-        void main() {
-          vUv = uv;
-          vec4 worldPosition = modelMatrix * vec4(position, 1.0);
-          vWorldPosition = worldPosition.xyz;
-          vHeight = position.z; // Local Z becomes height in rotated plane
-          gl_Position = projectionMatrix * viewMatrix * worldPosition;
-        }
-      `,
-      fragmentShader: /* glsl */ `
-        uniform vec3 fogColor;
-        uniform float time;
-        uniform float layerHeight;
-        varying vec3 vWorldPosition;
-        varying vec2 vUv;
-        varying float vHeight;
-
-        float hash(vec2 p) {
-          vec3 p3 = fract(vec3(p.xyx) * 0.13);
-          p3 += dot(p3, p3.yzx + 3.333);
-          return fract((p3.x + p3.y) * p3.z);
-        }
-
-        float noise(vec2 x) {
-          vec2 i = floor(x);
-          vec2 f = fract(x);
-          float a = hash(i);
-          float b = hash(i + vec2(1.0, 0.0));
-          float c = hash(i + vec2(0.0, 1.0));
-          float d = hash(i + vec2(1.0, 1.0));
-          vec2 u = f * f * (3.0 - 2.0 * f);
-          return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
-        }
-
-        float fbm(vec2 p) {
-          float value = 0.0;
-          float amplitude = 0.5;
-          float frequency = 1.0;
-          for(int i = 0; i < 5; i++) {
-            value += amplitude * noise(p * frequency);
-            frequency *= 2.0;
-            amplitude *= 0.5;
-          }
-          return value;
-        }
-
-        void main() {
-          // Distance from center
-          float dist = length(vWorldPosition.xz) / 18.0;
-
-          // Animated noise for smoke
-          vec2 fogUv1 = vUv * 2.5 + vec2(time * 0.012, time * 0.008) + layerHeight * 0.5;
-          vec2 fogUv2 = vUv * 3.5 - vec2(time * 0.018, time * 0.012) + layerHeight * 0.3;
-          float noiseValue1 = fbm(fogUv1);
-          float noiseValue2 = fbm(fogUv2);
-          float combinedNoise = (noiseValue1 * 0.6 + noiseValue2 * 0.4);
-
-          // Wispy smoke patterns with threshold
-          float smokeDensity = smoothstep(0.3, 0.7, combinedNoise);
-
-          // Distance falloff
-          float distFactor = 1.0 - smoothstep(0.2, 1.0, dist);
-
-          // Vertical gradient - denser at bottom, fades to top
-          float heightGradient = 1.0 - (vHeight / 3.0 + 0.5);
-          heightGradient = clamp(pow(heightGradient, 1.2), 0.0, 1.0);
-
-          // Combine all factors
-          float alpha = smokeDensity * distFactor * heightGradient;
-
-          // Red glow with gradient
-          vec3 glowColor = mix(fogColor, vec3(0.5, 0.08, 0.08), heightGradient * 0.6);
-
-          gl_FragColor = vec4(glowColor, alpha * 0.6);
-        }
-      `,
-    };
+    const fogShader = createFogShader();
 
     // Create multiple fog layers for volumetric effect
     const fogLayers: THREE.Mesh[] = [];
@@ -526,6 +227,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
       const fogPlane = new THREE.Mesh(fogGeometry, fogMaterial);
       fogPlane.rotation.x = -Math.PI / 2;
       fogPlane.position.y = -0.9 + layerHeight;
+      fogPlane.userData = { ...fogPlane.userData, isFogLayer: true };
       scene.add(fogPlane);
       fogLayers.push(fogPlane);
     }
@@ -546,98 +248,21 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
       }
     });
 
-    // Invisible walls (dynamic sizing)
-    let wallBodies: CANNON.Body[] = [];
-    const wallHeight = 10;
-    const wallThickness = 0.5;
-
-    function updateWalls(itemCount: number, maxScale: number = 1.0) {
-      // Remove old walls
-      wallBodies.forEach(wall => world.removeBody(wall));
-      wallBodies = [];
-
-      // Calculate wall size based on items
-      // Base size for 1-5 items, scales up with more items and larger scales
-      const baseSize = 8;
-      const itemFactor = Math.sqrt(itemCount) * 1.5;
-      const scaleFactor = maxScale * 1.2;
-      const wallSize = Math.max(baseSize, Math.min(baseSize + itemFactor + scaleFactor, 25));
-
-      const wallShapeX = new CANNON.Box(new CANNON.Vec3(wallThickness, wallHeight, wallSize));
-      const wallShapeZ = new CANNON.Box(new CANNON.Vec3(wallSize, wallHeight, wallThickness));
-
-      const walls = [
-        { shape: wallShapeX, pos: [-wallSize, wallHeight / 2 - 1.2, 0] },
-        { shape: wallShapeX, pos: [wallSize, wallHeight / 2 - 1.2, 0] },
-        { shape: wallShapeZ, pos: [0, wallHeight / 2 - 1.2, -wallSize] },
-        { shape: wallShapeZ, pos: [0, wallHeight / 2 - 1.2, wallSize] },
-      ];
-
-      walls.forEach(({ shape, pos }) => {
-        const wall = new CANNON.Body({ type: CANNON.Body.STATIC, material: defaultMaterial });
-        wall.addShape(shape);
-        wall.position.set(pos[0], pos[1], pos[2]);
-        world.addBody(wall);
-        wallBodies.push(wall);
-      });
-
-      console.log(`Updated walls: size=${wallSize.toFixed(1)}, items=${itemCount}, maxScale=${maxScale.toFixed(2)}`);
-    }
+    // All scene objects
+    const sceneObjects: SceneObject[] = [];
+    const { createFolder, createFile, createDisk, removeObject, spawnEntries, updateWalls } = createSpawnFactory({
+      scene,
+      world,
+      defaultMaterial,
+      sceneObjects,
+      generateId,
+    });
 
     // Initialize with default walls
     updateWalls(5, 1.0);
 
     // Infinite grid shader - red squares extending to horizon
-    const infiniteGridShader = {
-      uniforms: {
-        gridColor: { value: new THREE.Color(0xff0000) },
-        gridSize: { value: 1.5 },
-        fadeDistance: { value: 25.0 },
-        opacity: { value: 0.4 },
-      },
-      vertexShader: /* glsl */ `
-        varying vec3 vWorldPosition;
-        void main() {
-          vec4 worldPosition = modelMatrix * vec4(position, 1.0);
-          vWorldPosition = worldPosition.xyz;
-          gl_Position = projectionMatrix * viewMatrix * worldPosition;
-        }
-      `,
-      fragmentShader: /* glsl */ `
-        uniform vec3 gridColor;
-        uniform float gridSize;
-        uniform float fadeDistance;
-        uniform float opacity;
-        varying vec3 vWorldPosition;
-
-        float getGrid(vec2 pos, float scale) {
-          vec2 coord = pos / scale;
-          vec2 grid = abs(fract(coord - 0.5) - 0.5) / fwidth(coord);
-          float line = min(grid.x, grid.y);
-          return 1.0 - min(line, 1.0);
-        }
-
-        void main() {
-          // Distance from camera for fade
-          float dist = length(vWorldPosition.xz);
-          float fadeFactor = 1.0 - smoothstep(fadeDistance * 0.5, fadeDistance, dist);
-
-          // Get grid lines
-          float grid1 = getGrid(vWorldPosition.xz, gridSize);
-          float grid2 = getGrid(vWorldPosition.xz, gridSize * 5.0) * 0.5; // Larger grid, dimmer
-
-          float gridValue = max(grid1, grid2);
-
-          // Fade color to black with distance
-          vec3 finalColor = mix(vec3(0.0), gridColor, fadeFactor);
-
-          // Apply fade and opacity
-          float finalAlpha = gridValue * fadeFactor * opacity;
-
-          gl_FragColor = vec4(finalColor, finalAlpha);
-        }
-      `,
-    };
+    const infiniteGridShader = createInfiniteGridShader();
 
     const gridGeometry = new THREE.PlaneGeometry(200, 200);
     const gridMaterial = new THREE.ShaderMaterial({
@@ -652,429 +277,8 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
     infiniteGrid.position.y = -1.195;
     scene.add(infiniteGrid);
 
-    // Helper functions
-    function createThickEdges(geometry: THREE.BufferGeometry, color: number, lineWidth: number, thresholdAngle = 1): Line2 {
-      const edges = new THREE.EdgesGeometry(geometry, thresholdAngle);
-      const posAttr = edges.attributes.position;
-      const positions: number[] = [];
-      for (let i = 0; i < posAttr.count; i += 2) {
-        positions.push(
-          posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i),
-          posAttr.getX(i + 1), posAttr.getY(i + 1), posAttr.getZ(i + 1)
-        );
-      }
-      const lineGeo = new LineGeometry();
-      lineGeo.setPositions(positions);
-      const lineMat = new LineMaterial({
-        color,
-        linewidth: lineWidth,
-        resolution: new THREE.Vector2(window.innerWidth, window.innerHeight),
-      });
-      return new Line2(lineGeo, lineMat);
-    }
-
-    function createLabel(name: string, size: string, scale: number, objectHeight: number = 1.1): CSS2DObject {
-      // Trim long names
-      const maxLen = 16;
-      const displayName = name.length > maxLen ? name.slice(0, maxLen - 1) + "…" : name;
-      const isTrimmed = name.length > maxLen;
-
-      // Scale font size based on screen size and object scale (1.5x larger)
-      const screenScale = Math.min(window.innerWidth, window.innerHeight) / 1000;
-      const baseFontSize = 15 * screenScale;  // 10 * 1.5
-      const fontSize = Math.round(baseFontSize + (scale - MIN_SCALE) / (MAX_SCALE - MIN_SCALE) * 9 * screenScale);  // 6 * 1.5
-      const padding = Math.round(4.5 + scale * 3);  // 3 * 1.5 and 2 * 1.5
-
-      const div = document.createElement("div");
-      div.style.cssText = `
-        background: rgba(0, 0, 0, 0.7);
-        border: 3px solid #ff0000;
-        padding: ${padding}px ${padding * 2}px;
-        font: ${fontSize}px 'VCR OSD Mono', ui-monospace, monospace;
-        color: #ffffff;
-        white-space: nowrap;
-        pointer-events: auto;
-        text-align: center;
-        transform: translate(-50%, -50%);
-        cursor: default;
-        transition: background 0.15s;
-        user-select: none;
-        -webkit-user-select: none;
-        letter-spacing: 1.5px;
-      `;
-
-      const nameDiv = document.createElement("div");
-      nameDiv.style.color = "#ff6666";
-      nameDiv.textContent = displayName;
-      div.appendChild(nameDiv);
-
-      if (size) {
-        const sizeDiv = document.createElement("div");
-        sizeDiv.style.color = "#888";
-        sizeDiv.textContent = size;
-        div.appendChild(sizeDiv);
-      }
-
-      // Show full name on hover if trimmed
-      if (isTrimmed) {
-        div.addEventListener("mouseenter", () => {
-          nameDiv.textContent = name;
-          div.style.background = "rgba(0, 0, 0, 0.9)";
-          div.style.zIndex = "1000";
-        });
-        div.addEventListener("mouseleave", () => {
-          nameDiv.textContent = displayName;
-          div.style.background = "rgba(0, 0, 0, 0.7)";
-          div.style.zIndex = "";
-        });
-      }
-
-      // Pass through click/drag events to the scene
-      const passThrough = (e: MouseEvent) => {
-        div.style.pointerEvents = "none";
-        const elementBelow = document.elementFromPoint(e.clientX, e.clientY);
-        div.style.pointerEvents = "auto";
-        if (elementBelow && elementBelow !== div) {
-          elementBelow.dispatchEvent(new MouseEvent(e.type, e));
-        }
-      };
-
-      // Pass through wheel events
-      const passThroughWheel = (e: WheelEvent) => {
-        div.style.pointerEvents = "none";
-        const elementBelow = document.elementFromPoint(e.clientX, e.clientY);
-        div.style.pointerEvents = "auto";
-        if (elementBelow && elementBelow !== div) {
-          elementBelow.dispatchEvent(new WheelEvent(e.type, e));
-        }
-      };
-
-      div.addEventListener("mousedown", passThrough);
-      div.addEventListener("mouseup", passThrough);
-      div.addEventListener("mousemove", passThrough);
-      div.addEventListener("dblclick", passThrough);
-      div.addEventListener("wheel", passThroughWheel);
-
-      const label = new CSS2DObject(div);
-      // Position based on base geometry height (not scaled)
-      label.position.set(0, objectHeight + 0.2, 0);
-      label.center.set(0.5, 1);
-      return label;
-    }
-
-    // All scene objects
-    const sceneObjects: SceneObject[] = [];
-    const SPHERE_RADIUS = 1.1;
-    const DIAMOND_RADIUS = 1.0;
-    const MIN_SCALE = 0.3;
-    const MAX_SCALE = 1.5;
-
-    // Calculate scale based on size - more linear for noticeable differences
-    function sizeToScale(size: number, maxSize: number): number {
-      if (maxSize <= 0 || size <= 0) return MIN_SCALE;
-      // Linear ratio with slight curve for better distribution
-      const ratio = size / maxSize;
-      // Gentle power curve to prevent tiny objects but keep differences visible
-      const curved = Math.pow(ratio, 0.7);
-      return MIN_SCALE + (MAX_SCALE - MIN_SCALE) * curved;
-    }
-
-    // Create folder (sphere) helper
-    function createFolder(entry: FileEntry, position: THREE.Vector3, velocity: THREE.Vector3, maxSize: number): SceneObject {
-      const scale = sizeToScale(entry.size, maxSize);
-      const sizeStr = formatSize(entry.size);
-      const geo = new THREE.SphereGeometry(SPHERE_RADIUS, 24, 16);
-      const mesh = new THREE.Mesh(
-        geo,
-        new THREE.MeshStandardMaterial({ color: 0x442a2a, roughness: 0.65, metalness: 0.15 })
-      );
-      mesh.castShadow = true;
-      mesh.scale.set(scale, scale, scale);
-
-      const body = new CANNON.Body({
-        mass: scale * 5,
-        shape: new CANNON.Sphere(SPHERE_RADIUS * scale),
-        material: defaultMaterial,
-        linearDamping: 0.6,
-        angularDamping: 0.5,
-      });
-      body.position.set(position.x, position.y, position.z);
-      body.velocity.set(velocity.x, velocity.y, velocity.z);
-      body.angularFactor.set(0, 1, 0);
-
-      const edges = createThickEdges(geo, 0xff0000, scale > 0.6 ? 4 : 3, 1);
-      edges.scale.set(scale, scale, scale);
-
-      mesh.add(createLabel(entry.name, sizeStr, scale, SPHERE_RADIUS));
-
-      scene.add(mesh);
-      scene.add(edges);
-      world.addBody(body);
-
-      const obj: SceneObject = {
-        id: generateId(),
-        mesh,
-        body,
-        edges,
-        type: "sphere",
-        scale,
-        originalScale: new THREE.Vector3(scale, scale, scale),
-        originalEmissive: 0x000000,
-        originalEmissiveIntensity: 0,
-        filePath: entry.path,
-        fileName: entry.name,
-        fileSize: sizeStr,
-        isDir: true,
-      };
-      sceneObjects.push(obj);
-      return obj;
-    }
-
-    // Create file (diamond) helper
-    function createFile(entry: FileEntry, position: THREE.Vector3, velocity: THREE.Vector3, maxSize: number): SceneObject {
-      const scale = sizeToScale(entry.size, maxSize);
-      const geo = new THREE.OctahedronGeometry(DIAMOND_RADIUS, 0);
-      const mesh = new THREE.Mesh(
-        geo,
-        new THREE.MeshStandardMaterial({
-          color: 0x4a2020,
-          roughness: 0.35,
-          metalness: 0.25,
-          emissive: 0x200505,
-          emissiveIntensity: 0.35,
-        })
-      );
-      mesh.castShadow = true;
-      mesh.scale.set(0.7 * scale, 1 * scale, 0.7 * scale);
-
-      const body = new CANNON.Body({
-        mass: scale * 5,
-        shape: new CANNON.Sphere(DIAMOND_RADIUS * scale * 1.2),
-        material: defaultMaterial,
-        linearDamping: 0.6,
-        angularDamping: 0.5,
-      });
-      body.position.set(position.x, position.y, position.z);
-      body.velocity.set(velocity.x, velocity.y, velocity.z);
-      body.angularFactor.set(0, 1, 0);
-
-      const edges = createThickEdges(geo, 0xff0000, 3, 1);
-      edges.scale.set(0.7 * scale, 1 * scale, 0.7 * scale);
-
-      const sizeStr = formatSize(entry.size);
-      mesh.add(createLabel(entry.name, sizeStr, scale, DIAMOND_RADIUS));
-
-      scene.add(mesh);
-      scene.add(edges);
-      world.addBody(body);
-
-      const obj: SceneObject = {
-        id: generateId(),
-        mesh,
-        body,
-        edges,
-        type: "diamond",
-        scale,
-        originalScale: new THREE.Vector3(0.7 * scale, 1 * scale, 0.7 * scale),
-        originalEmissive: 0x200505,
-        originalEmissiveIntensity: 0.35,
-        filePath: entry.path,
-        fileName: entry.name,
-        fileSize: sizeStr,
-        isDir: false,
-      };
-      sceneObjects.push(obj);
-      return obj;
-    }
-
-    // Create disk (cube) helper - for Windows/Linux disk drives
-    function createDisk(disk: DiskInfo, position: THREE.Vector3, velocity: THREE.Vector3, maxSize: number): SceneObject {
-      // Calculate scale based on total disk size
-      const MIN_DISK_SCALE = 0.5;
-      const MAX_DISK_SCALE = 1.8;
-      const scale = maxSize > 0
-        ? MIN_DISK_SCALE + (MAX_DISK_SCALE - MIN_DISK_SCALE) * Math.sqrt(disk.total_space / maxSize)
-        : 1.0;
-
-      const cubeSize = 1.2;
-      const geo = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
-
-      // Calculate how full the disk is (for color)
-      const usedSpace = disk.total_space - disk.available_space;
-      const percentUsed = disk.total_space > 0 ? usedSpace / disk.total_space : 0;
-      const colorValue = Math.floor(0x3a + (0xff - 0x3a) * percentUsed);
-
-      const mesh = new THREE.Mesh(
-        geo,
-        new THREE.MeshStandardMaterial({
-          color: (colorValue << 16) | (colorValue << 8) | 0x4a,
-          roughness: 0.5,
-          metalness: 0.3,
-          emissive: 0x101020,
-          emissiveIntensity: 0.2,
-        })
-      );
-      mesh.castShadow = true;
-      mesh.scale.set(scale, scale, scale);
-
-      const body = new CANNON.Body({
-        mass: scale * 7.5,
-        shape: new CANNON.Box(new CANNON.Vec3(cubeSize * scale / 2, cubeSize * scale / 2, cubeSize * scale / 2)),
-        material: defaultMaterial,
-        linearDamping: 0.6,
-        angularDamping: 0.5,
-      });
-      body.position.set(position.x, position.y, position.z);
-      body.velocity.set(velocity.x, velocity.y, velocity.z);
-      body.angularFactor.set(0, 1, 0);
-
-      const edges = createThickEdges(geo, 0xff0000, Math.max(3, scale * 4), 1);
-      edges.scale.set(scale, scale, scale);
-
-      // Debug: Log raw disk info
-      console.log(`Raw disk data for ${disk.name}:`, disk);
-      console.log(`  total_space: ${disk.total_space}`);
-      console.log(`  available_space: ${disk.available_space}`);
-
-      // Format available space - values might already be in GB or different unit
-      let availableGB = disk.available_space;
-      let totalGB = disk.total_space;
-
-      // If values seem to be in bytes (very large numbers), convert to GB
-      if (disk.total_space > 1000000) {
-        totalGB = disk.total_space / (1024 * 1024 * 1024);
-        availableGB = disk.available_space / (1024 * 1024 * 1024);
-      }
-
-      console.log(`Disk ${disk.name}: ${availableGB.toFixed(1)} GB free of ${totalGB.toFixed(1)} GB total`);
-
-      const sizeLabel = availableGB < 0.1 ? "empty" : `${availableGB.toFixed(1)} GB free`;
-
-      mesh.add(createLabel(disk.name, sizeLabel, scale, cubeSize / 2));
-
-      scene.add(mesh);
-      scene.add(edges);
-      world.addBody(body);
-
-      const obj: SceneObject = {
-        id: generateId(),
-        mesh,
-        body,
-        edges,
-        type: "sphere", // Treat as navigable like folders
-        scale,
-        originalScale: new THREE.Vector3(scale, scale, scale),
-        originalEmissive: 0x101020,
-        originalEmissiveIntensity: 0.2,
-        filePath: disk.path,
-        fileName: disk.name,
-        fileSize: sizeLabel,
-        isDir: true, // Disks are navigable
-        isDisk: true, // Mark as disk for special handling
-      };
-      sceneObjects.push(obj);
-      return obj;
-    }
-
-    // Remove object from scene
-    function removeObject(obj: SceneObject) {
-      const idx = sceneObjects.indexOf(obj);
-      if (idx !== -1) sceneObjects.splice(idx, 1);
-
-      // Remove CSS2D labels (children of mesh)
-      const toRemove: THREE.Object3D[] = [];
-      obj.mesh.traverse((child) => {
-        if (child instanceof CSS2DObject) {
-          toRemove.push(child);
-          // Remove the DOM element
-          const css2d = child as CSS2DObject;
-          if (css2d.element && css2d.element.parentNode) {
-            css2d.element.parentNode.removeChild(css2d.element);
-          }
-        }
-      });
-      toRemove.forEach((child) => obj.mesh.remove(child));
-
-      scene.remove(obj.mesh);
-      scene.remove(obj.edges);
-      world.removeBody(obj.body);
-      obj.mesh.geometry.dispose();
-      (obj.mesh.material as THREE.Material).dispose();
-    }
-
-    // Spawn entries as 3D objects
-    function spawnEntries(entries: FileEntry[]) {
-      if (entries.length > 0) playSpawn();
-      const count = Math.min(entries.length, 20); // Limit to 20 objects
-      const entriesToShow = entries.slice(0, count);
-
-      // Calculate max size for scaling
-      const maxSize = Math.max(...entriesToShow.map(e => e.size), 1);
-      const maxScale = sizeToScale(maxSize, maxSize);
-
-      // Update walls based on number of items and their max scale
-      updateWalls(count, maxScale);
-
-      // Tight grid spawning - objects spawn close together
-      const gridSize = Math.ceil(Math.sqrt(count));
-      const spacing = 1.8; // Tight spacing between objects
-
-      for (let i = 0; i < count; i++) {
-        const entry = entriesToShow[i];
-
-        // Calculate grid position
-        const row = Math.floor(i / gridSize);
-        const col = i % gridSize;
-
-        // Center the grid around origin
-        const offsetX = (gridSize - 1) * spacing / 2;
-        const offsetZ = (gridSize - 1) * spacing / 2;
-
-        // Add slight randomization to avoid perfect grid
-        const randomOffset = 0.3;
-        const spawnPos = new THREE.Vector3(
-          col * spacing - offsetX + (Math.random() - 0.5) * randomOffset,
-          5 + Math.random() * 2, // Lower variance in height
-          row * spacing - offsetZ + (Math.random() - 0.5) * randomOffset
-        );
-
-        // Minimal horizontal velocity for tighter landing
-        const spawnVel = new THREE.Vector3(
-          (Math.random() - 0.5) * 0.5,
-          -2,
-          (Math.random() - 0.5) * 0.5
-        );
-
-        if (entry.is_dir) {
-          createFolder(entry, spawnPos, spawnVel, maxSize);
-        } else {
-          createFile(entry, spawnPos, spawnVel, maxSize);
-        }
-      }
-    }
-
-    // Exit animations (scale up and fade out)
+    // Exit animations state (uses imported functions)
     let exitAnims: ExitAnim[] = [];
-
-    // Exit all current objects with animation
-    function exitCurrentObjects(duration = 400) {
-      const now = performance.now();
-      for (const obj of sceneObjects) {
-        if (!obj.isExiting) {
-          obj.isExiting = true;
-          obj.body.type = CANNON.Body.STATIC;
-          obj.body.velocity.set(0, 0, 0);
-          obj.body.angularVelocity.set(0, 0, 0);
-
-          exitAnims.push({
-            obj,
-            startScale: obj.mesh.scale.clone(),
-            startTime: now,
-            duration,
-          });
-        }
-      }
-    }
 
     // Load directory contents from Rust backend
     async function loadDirectory(path: string) {
@@ -1092,8 +296,9 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
         }));
 
         navigateTo(path, entries, { cameraPosition, cameraTarget, objectStates });
-        exitCurrentObjects();
+        exitCurrentObjects(sceneObjects, exitAnims);
         setTimeout(() => {
+          if (entries.length > 0) playSpawn();
           spawnEntries(entries);
           hideLoading();
         }, 200);
@@ -1114,8 +319,9 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
       const previous = goBack();
       if (previous) {
         playNavigateBack();
-        exitCurrentObjects(300);
+        exitCurrentObjects(sceneObjects, exitAnims, 300);
         setTimeout(() => {
+          if (previous.entries.length > 0) playSpawn();
           spawnEntries(previous.entries);
 
           // Restore camera position if saved
@@ -1138,7 +344,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
         // Clear history and exit current objects
         const { clearHistory } = useSceneStore.getState();
         clearHistory();
-        exitCurrentObjects(300);
+        exitCurrentObjects(sceneObjects, exitAnims, 300);
 
         setTimeout(async () => {
           if (disks.length > 0) {
@@ -1146,11 +352,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
             const count = disks.length;
             const maxDiskSize = Math.max(...disks.map(d => d.total_space), 1);
 
-            const MIN_DISK_SCALE = 0.5;
-            const MAX_DISK_SCALE = 1.8;
-            const maxScale = maxDiskSize > 0
-              ? MIN_DISK_SCALE + (MAX_DISK_SCALE - MIN_DISK_SCALE) * Math.sqrt(maxDiskSize / maxDiskSize)
-              : 1.0;
+            const maxScale = diskMaxScale(maxDiskSize);
 
             updateWalls(count, maxScale);
 
@@ -1188,129 +390,16 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
       }
     }
 
-    // Load mecha model
+    // Load mecha model - uses extracted animation module
     function loadMecha() {
-      const loader = new GLTFLoader();
-
-      // Set up Draco loader for compressed geometries
-      const dracoLoader = new DRACOLoader();
-      dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
-      loader.setDRACOLoader(dracoLoader);
-
-      loader.load(
-        "/src/assets/mecha.glb",
-        (gltf) => {
-          const mecha = gltf.scene;
-
-          // Position at top center
-          mecha.position.set(0, 8, 0);
-          mecha.scale.set(0.05, 0.05, 0.05);
-
-          // Add red edges to all meshes
-          const edgeLines: Line2[] = [];
-          mecha.traverse((child) => {
-            if ((child as THREE.Mesh).isMesh) {
-              const mesh = child as THREE.Mesh;
-              mesh.castShadow = true;
-
-              // Apply red material tint
-              if (mesh.material) {
-                const mat = mesh.material as THREE.MeshStandardMaterial;
-                if (mat.color) {
-                  // Tint material red
-                  mat.color.multiplyScalar(0.3);
-                  mat.color.r = Math.max(mat.color.r, 1.0);
-                  mat.color.g *= 0.3;
-                  mat.color.b *= 0.3;
-                }
-                mat.emissive = new THREE.Color(0x660000);
-                mat.emissiveIntensity = 0.5;
-              }
-
-              // Create red edges
-              if (mesh.geometry) {
-                const edges = createThickEdges(mesh.geometry, 0xff0000, 2, 15);
-                edges.position.copy(mesh.position);
-                edges.rotation.copy(mesh.rotation);
-                edges.scale.copy(mesh.scale);
-                mecha.add(edges);
-                edgeLines.push(edges);
-              }
-            }
-          });
-
-          scene.add(mecha);
-
-          // Disable controls
-          controls.enabled = false;
-
-          // Get the center of the mecha model
-          const box = new THREE.Box3().setFromObject(mecha);
-          const center = box.getCenter(new THREE.Vector3());
-
-          // Animate camera to focus on mecha
-          const startPos = camera.position.clone();
-          const startTarget = controls.target.clone();
-          const endPos = new THREE.Vector3(0, center.y, 12);
-          const endTarget = center;
-          const focusDuration = 2000;
-          const focusStartTime = performance.now();
-
-          function animateCamera() {
-            const elapsed = performance.now() - focusStartTime;
-            const t = Math.min(elapsed / focusDuration, 1);
-            const eased = t * t * t; // ease in cubic
-
-            camera.position.lerpVectors(startPos, endPos, eased);
-            controls.target.lerpVectors(startTarget, endTarget, eased);
-            camera.lookAt(controls.target);
-
-            if (t < 1) {
-              requestAnimationFrame(animateCamera);
-            } else {
-              // Start orbit animation after focus completes
-              orbitCamera();
-            }
-          }
-
-          function orbitCamera() {
-            const orbitDuration = 1500; // 1.5 seconds
-            const orbitStartTime = performance.now();
-            const orbitRadius = 12;
-
-            function animate() {
-              const elapsed = performance.now() - orbitStartTime;
-              const t = Math.min(elapsed / orbitDuration, 1);
-              const eased = t * t * t; // ease in cubic
-
-              // Full circle (2 * PI radians)
-              const angle = eased * Math.PI * 2;
-
-              // Camera orbits at same Y level as model center
-              camera.position.x = center.x + Math.sin(angle) * orbitRadius;
-              camera.position.y = center.y;
-              camera.position.z = center.z + Math.cos(angle) * orbitRadius;
-
-              // Keep looking at center
-              controls.target.copy(center);
-              camera.lookAt(controls.target);
-
-              if (t < 1) {
-                requestAnimationFrame(animate);
-              }
-            }
-
-            animate();
-          }
-
-          animateCamera();
-        },
-        (progress) => {
-          console.log("Loading mecha:", (progress.loaded / progress.total * 100).toFixed(2) + "%");
-        },
-        (error) => {
-          console.error("Error loading mecha:", error);
-        }
+      ensureAudio();
+      loadMechaAnimation(
+        scene,
+        camera,
+        controls,
+        renderer,
+        createThickEdges,
+        BLOOM_LAYER
       );
     }
 
@@ -1338,11 +427,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
           const maxDiskSize = Math.max(...disks.map(d => d.total_space), 1);
 
           // Calculate max scale for disks
-          const MIN_DISK_SCALE = 0.5;
-          const MAX_DISK_SCALE = 1.8;
-          const maxScale = maxDiskSize > 0
-            ? MIN_DISK_SCALE + (MAX_DISK_SCALE - MIN_DISK_SCALE) * Math.sqrt(maxDiskSize / maxDiskSize)
-            : 1.0;
+          const maxScale = diskMaxScale(maxDiskSize);
 
           // Update walls for disks
           updateWalls(count, maxScale);
@@ -1393,68 +478,19 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
     const intersection = new THREE.Vector3();
     let draggedObject: SceneObject | null = null;
     let dragConstraint: CANNON.PointToPointConstraint | null = null;
-    let dragStartPosition: CANNON.Vec3 | null = null;
 
     const mouseBody = new CANNON.Body({ mass: 0 });
     world.addBody(mouseBody);
 
-    // Scale animations
-    type ScaleAnim = { obj: SceneObject; startScale: THREE.Vector3; endScale: THREE.Vector3; startTime: number; duration: number };
+    // Scale animations state (uses imported functions)
     let scaleAnims: ScaleAnim[] = [];
 
-    function easeOutBounce(x: number): number {
-      const n1 = 7.5625, d1 = 2.75;
-      if (x < 1 / d1) return n1 * x * x;
-      if (x < 2 / d1) return n1 * (x -= 1.5 / d1) * x + 0.75;
-      if (x < 2.5 / d1) return n1 * (x -= 2.25 / d1) * x + 0.9375;
-      return n1 * (x -= 2.625 / d1) * x + 0.984375;
-    }
-
-    function easeOutCubic(x: number): number {
-      return 1 - Math.pow(1 - x, 3);
-    }
-
-    function startScaleAnim(obj: SceneObject, toScale: THREE.Vector3, duration = 300) {
-      scaleAnims = scaleAnims.filter(a => a.obj !== obj);
-      scaleAnims.push({ obj, startScale: obj.mesh.scale.clone(), endScale: toScale.clone(), startTime: performance.now(), duration });
-    }
-
-    // Particle system for click effects
-    type Particle = {
-      mesh: THREE.Mesh;
-      velocity: THREE.Vector3;
-      startTime: number;
-      lifetime: number;
-    };
+    // Particle system state (uses imported functions)
     let particles: Particle[] = [];
-
-    function spawnClickParticles(position: THREE.Vector3, count = 10) {
-      for (let i = 0; i < count; i++) {
-        const geo = new THREE.SphereGeometry(0.05, 4, 4);
-        const mat = new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: true });
-        const mesh = new THREE.Mesh(geo, mat);
-        mesh.position.copy(position);
-
-        const angle = (i / count) * Math.PI * 2;
-        const speed = 2 + Math.random() * 2;
-        const velocity = new THREE.Vector3(
-          Math.cos(angle) * speed,
-          Math.random() * 3 + 2,
-          Math.sin(angle) * speed
-        );
-
-        scene.add(mesh);
-        particles.push({
-          mesh,
-          velocity,
-          startTime: performance.now(),
-          lifetime: 500 + Math.random() * 300,
-        });
-      }
-    }
 
     // Mouse handlers
     function onMouseDown(event: MouseEvent) {
+      if (isFlightModeActive()) return;
       mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
       mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
 
@@ -1471,21 +507,14 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
           controls.enabled = false;
           draggedObject = hitObj;
 
-          // Store initial position
-          dragStartPosition = new CANNON.Vec3(
-            hitObj.body.position.x,
-            hitObj.body.position.y,
-            hitObj.body.position.z
-          );
-
           playPickup();
 
           // Spawn click particles
-          spawnClickParticles(hitObj.mesh.position.clone());
+          spawnClickParticles(scene, hitObj.mesh.position.clone(), particles);
 
           // Scale up for dragging
           const bigScale = hitObj.originalScale.clone().multiplyScalar(1.3);
-          startScaleAnim(hitObj, bigScale, 400);
+          startScaleAnim(scaleAnims, hitObj, bigScale, 400);
 
           // Glow
           const mat = hitObj.mesh.material as THREE.MeshStandardMaterial;
@@ -1507,6 +536,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
 
     // Double-click to navigate into folders (spheres)
     function onDoubleClick(event: MouseEvent) {
+      if (isFlightModeActive()) return;
       mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
       mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
 
@@ -1525,6 +555,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
     }
 
     function onMouseMove(event: MouseEvent) {
+      if (isFlightModeActive()) return;
       if (!draggedObject || !dragConstraint) return;
       mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
       mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
@@ -1535,9 +566,10 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
     }
 
     function onMouseUp() {
+      if (isFlightModeActive()) return;
       if (draggedObject) {
         playDrop();
-        startScaleAnim(draggedObject, draggedObject.originalScale, 400);
+        startScaleAnim(scaleAnims, draggedObject, draggedObject.originalScale, 400);
         const mat = draggedObject.mesh.material as THREE.MeshStandardMaterial;
 
         // Restore original colors
@@ -1553,12 +585,12 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
         dragConstraint = null;
       }
       draggedObject = null;
-      dragStartPosition = null;
       controls.enabled = true;
     }
 
     // Keyboard handler for back navigation
     function onKeyDown(event: KeyboardEvent) {
+      if (isFlightModeActive()) return;
       if (event.key === "Escape" || event.key === "Backspace") {
         event.preventDefault();
         navigateBack();
@@ -1568,73 +600,13 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
     renderer.domElement.addEventListener("mousedown", onMouseDown);
     renderer.domElement.addEventListener("mousemove", onMouseMove);
     renderer.domElement.addEventListener("mouseup", onMouseUp);
-    renderer.domElement.addEventListener("mouseleave", (e) => onMouseUp(e as MouseEvent));
+    renderer.domElement.addEventListener("mouseleave", () => onMouseUp());
     renderer.domElement.addEventListener("dblclick", onDoubleClick);
     window.addEventListener("keydown", onKeyDown);
 
     // Bloom setup
-    const bloomLayer = new THREE.Layers();
-    bloomLayer.set(BLOOM_LAYER);
-    const darkMaterial = new THREE.MeshBasicMaterial({ color: 0x000000 });
-    const materials: Map<string, THREE.Material | THREE.Material[]> = new Map();
-
-    function darkenNonBloomed(obj: THREE.Object3D) {
-      if ((obj as THREE.Mesh).isMesh && !bloomLayer.test(obj.layers)) {
-        const mesh = obj as THREE.Mesh;
-        materials.set(mesh.uuid, mesh.material);
-        mesh.material = darkMaterial;
-      }
-    }
-
-    function restoreMaterial(obj: THREE.Object3D) {
-      if ((obj as THREE.Mesh).isMesh) {
-        const mesh = obj as THREE.Mesh;
-        const cached = materials.get(mesh.uuid);
-        if (cached) {
-          mesh.material = cached;
-          materials.delete(mesh.uuid);
-        }
-      }
-    }
-
-    const renderScene = new RenderPass(scene, camera);
-    const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 3.0, 0.15, 0.0);
-    const bloomComposer = new EffectComposer(renderer);
-    bloomComposer.renderToScreen = false;
-    bloomComposer.addPass(renderScene);
-    bloomComposer.addPass(bloomPass);
-
-    const BlendShader = {
-      uniforms: {
-        tDiffuse: { value: null },
-        bloomTexture: { value: bloomComposer.renderTarget2.texture },
-        bloomIntensity: { value: 0.0 },
-      },
-      vertexShader: /* glsl */ `
-        varying vec2 vUv;
-        void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
-      `,
-      fragmentShader: /* glsl */ `
-        uniform sampler2D tDiffuse;
-        uniform sampler2D bloomTexture;
-        uniform float bloomIntensity;
-        varying vec2 vUv;
-        void main() {
-          vec4 base = texture2D(tDiffuse, vUv);
-          vec4 bloom = texture2D(bloomTexture, vUv);
-          gl_FragColor = base + bloom * bloomIntensity;
-        }
-      `,
-    };
-
-    const composer = new EffectComposer(renderer);
-    composer.addPass(new RenderPass(scene, camera));
-    const blendPass = new ShaderPass(BlendShader);
-    blendPass.needsSwap = true;
-    composer.addPass(blendPass);
-
-    const ditherPass = new ShaderPass(DitherPixelShader);
-    composer.addPass(ditherPass);
+    const renderPipeline = createRenderPipeline(renderer, scene, camera, BLOOM_LAYER);
+    const { composer, bloomComposer, blendPass, ditherPass, darkenNonBloomed, restoreMaterial } = renderPipeline;
     ditherPassRef.current = ditherPass;
 
     let bloomActive = false;
@@ -1663,59 +635,14 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
         mat.uniforms.time.value = now * 0.001;
       });
 
-      // Exit animations (scale up to 10x and remove)
-      exitAnims = exitAnims.filter(anim => {
-        const t = Math.min((now - anim.startTime) / anim.duration, 1);
-        const eased = easeOutCubic(t);
-        const targetScale = 10;
-        const newScale = anim.startScale.clone().multiplyScalar(1 + (targetScale - 1) * eased);
-        anim.obj.mesh.scale.copy(newScale);
-        anim.obj.edges.scale.copy(newScale);
+      // Exit animations (scale up to 10x and remove) - uses imported function
+      exitAnims = updateExitAnimations(exitAnims, removeObject);
 
-        // Fade out material
-        const mat = anim.obj.mesh.material as THREE.MeshStandardMaterial;
-        mat.opacity = 1 - eased;
-        mat.transparent = true;
+      // Scale animations - uses imported function
+      scaleAnims = updateScaleAnimations(scaleAnims);
 
-        if (t >= 1) {
-          removeObject(anim.obj);
-          return false;
-        }
-        return true;
-      });
-
-      // Scale animations
-      scaleAnims = scaleAnims.filter(anim => {
-        if (anim.obj.isExiting) return false;
-        const t = Math.min((now - anim.startTime) / anim.duration, 1);
-        const eased = easeOutBounce(t);
-        const newScale = new THREE.Vector3().lerpVectors(anim.startScale, anim.endScale, eased);
-        anim.obj.mesh.scale.copy(newScale);
-        anim.obj.edges.scale.copy(newScale);
-        return t < 1;
-      });
-
-      // Particle animations
-      particles = particles.filter(particle => {
-        const elapsed = now - particle.startTime;
-        const t = Math.min(elapsed / particle.lifetime, 1);
-
-        if (t >= 1) {
-          scene.remove(particle.mesh);
-          particle.mesh.geometry.dispose();
-          (particle.mesh.material as THREE.Material).dispose();
-          return false;
-        }
-
-        // Update position with gravity
-        particle.velocity.y -= delta * 15;
-        particle.mesh.position.add(particle.velocity.clone().multiplyScalar(delta));
-
-        // Fade out
-        (particle.mesh.material as THREE.MeshBasicMaterial).opacity = 1 - t;
-
-        return true;
-      });
+      // Particle animations - uses imported function
+      particles = updateClickParticles(scene, particles, delta);
 
       // Physics
       world.step(1 / 120, delta, 10);
@@ -1758,7 +685,9 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
         obj.edges.scale.copy(obj.mesh.scale);
       }
 
-      controls.update();
+      if (!isFlightModeActive()) {
+        controls.update();
+      }
 
       // Bloom
       if (bloomActive) {
@@ -1771,7 +700,12 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
       }
 
       composer.render();
-      labelRenderer.render(scene, camera);
+      if (isFlightModeActive()) {
+        labelRenderer.domElement.style.display = "none";
+      } else {
+        labelRenderer.domElement.style.display = "block";
+        labelRenderer.render(scene, camera);
+      }
     }
     animate();
 
@@ -1784,10 +718,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
       labelRenderer.setSize(newWidth, newHeight);
       camera.aspect = newWidth / newHeight;
       camera.updateProjectionMatrix();
-      composer.setSize(newWidth, newHeight);
-      bloomComposer.setSize(newWidth, newHeight);
-      bloomPass.resolution.set(newWidth, newHeight);
-      ditherPass.uniforms.resolution.value.set(newWidth, newHeight);
+      renderPipeline.setSize(newWidth, newHeight);
 
       // Update edge line materials resolution
       for (const obj of sceneObjects) {
@@ -1797,24 +728,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
 
       // Update label font sizes
       const screenScale = Math.min(newWidth, newHeight) / 1000;
-      for (const obj of sceneObjects) {
-        obj.mesh.traverse((child) => {
-          if (child instanceof CSS2DObject) {
-            const label = child as CSS2DObject;
-            const div = label.element;
-
-            // Recalculate font size based on new screen size and object scale
-            const baseFontSize = 15 * screenScale;
-            const fontSize = Math.round(baseFontSize + (obj.scale - MIN_SCALE) / (MAX_SCALE - MIN_SCALE) * 9 * screenScale);
-            const padding = Math.round(4.5 + obj.scale * 3);
-
-            // Update font size in the style
-            const currentFont = div.style.font;
-            div.style.font = currentFont.replace(/\d+px/, `${fontSize}px`);
-            div.style.padding = `${padding}px ${padding * 2}px`;
-          }
-        });
-      }
+      updateLabelFontSizes(sceneObjects, screenScale);
 
       // Update React state to trigger re-render of UI elements
       setWindowSize({ width: newWidth, height: newHeight });
@@ -1849,14 +763,8 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
       container.removeChild(renderer.domElement);
       container.removeChild(labelRenderer.domElement);
       container.removeChild(fpsDiv);
-      container.removeChild(loadingOverlay);
-      style.remove();
-      bassSynth.dispose();
-      subBass.dispose();
-      glitchSynth.dispose();
-      fmSynth.dispose();
-      filter.dispose();
-      reverb.dispose();
+      loadingOverlay.dispose();
+      // Sound system cleanup is handled by the sound-effects module
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onRendererReady]);
@@ -1905,142 +813,16 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
   return (
     <>
       <div ref={containerRef} style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%" }} />
-      {breadcrumbs.length > 0 && (
-        <div style={{
-          position: "absolute",
-          top: 12,
-          left: "50%",
-          transform: "translateX(-50%)",
-          background: "rgba(0, 0, 0, 0.7)",
-          border: "2px solid #ff0000",
-          padding: `${Math.max(8, Math.min(windowSize.width, windowSize.height) / 100)}px ${Math.max(16, Math.min(windowSize.width, windowSize.height) / 50)}px`,
-          font: `${Math.max(14, Math.min(windowSize.width, windowSize.height) / 50)}px ui-monospace, monospace`,
-          color: "#ff6666",
-          zIndex: 100,
-          display: "flex",
-          gap: `${Math.max(8, Math.min(windowSize.width, windowSize.height) / 100)}px`,
-          alignItems: "center",
-        }}>
-          {breadcrumbs.map((crumb, index) => (
-            <span key={index} style={{ display: "flex", alignItems: "center", gap: `${Math.max(8, Math.min(windowSize.width, windowSize.height) / 100)}px` }}>
-              {index > 0 && <span style={{ color: "#ff4444", fontSize: `${Math.max(16, Math.min(windowSize.width, windowSize.height) / 40)}px` }}>›</span>}
-              <span
-                style={{
-                  cursor: index < breadcrumbs.length - 1 ? "pointer" : "default",
-                  color: index < breadcrumbs.length - 1 ? "#ff8888" : "#ff6666",
-                  textDecoration: index < breadcrumbs.length - 1 ? "underline" : "none",
-                }}
-                onClick={() => {
-                  if (index < breadcrumbs.length - 1) {
-                    if (crumb.path === "") {
-                      // Navigate to Computer view (disks)
-                      navigateToComputer();
-                    } else if (loadDirectoryRef.current) {
-                      loadDirectoryRef.current(crumb.path);
-                    }
-                  }
-                }}
-                onMouseEnter={(e) => {
-                  if (index < breadcrumbs.length - 1) {
-                    e.currentTarget.style.color = "#ffffff";
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (index < breadcrumbs.length - 1) {
-                    e.currentTarget.style.color = "#ff8888";
-                  }
-                }}
-              >
-                {crumb.name}
-              </span>
-            </span>
-          ))}
-        </div>
-      )}
-      {(canGoBack || currentPath !== "") && (
-        <button
-          onClick={() => {
-            if (canGoBack) {
-              handleBack();
-            } else if (currentPath !== "") {
-              // Go back to Computer level
-              navigateToComputer();
-            }
-          }}
-          style={{
-            position: "absolute",
-            top: 12,
-            right: 12,
-            background: "rgba(0, 0, 0, 0.7)",
-            border: "2px solid #ff0000",
-            padding: `${Math.max(8, Math.min(windowSize.width, windowSize.height) / 100)}px ${Math.max(16, Math.min(windowSize.width, windowSize.height) / 50)}px`,
-            font: `${Math.max(14, Math.min(windowSize.width, windowSize.height) / 50)}px ui-monospace, monospace`,
-            color: "#ff6666",
-            cursor: "pointer",
-            zIndex: 100,
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = "rgba(255, 0, 0, 0.2)";
-            e.currentTarget.style.color = "#ffffff";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = "rgba(0, 0, 0, 0.7)";
-            e.currentTarget.style.color = "#ff6666";
-          }}
-        >
-          ← Back
-        </button>
-      )}
-
-      {/* Big X Button - Only show when in folders, not at computer/disks level */}
-      {currentPath !== "" && (
-        <button
-        onClick={() => {
-          if (loadMechaRef.current) {
-            loadMechaRef.current();
-          }
-        }}
-        style={{
-          position: "absolute",
-          bottom: Math.max(20, Math.min(windowSize.width, windowSize.height) / 30),
-          left: "50%",
-          transform: "translateX(-50%)",
-          background: "rgba(0, 0, 0, 0.8)",
-          border: "4px solid #ff0000",
-          borderRadius: "0",
-          width: Math.max(80, Math.min(windowSize.width, windowSize.height) / 8),
-          height: Math.max(80, Math.min(windowSize.width, windowSize.height) / 8),
-          font: `bold ${Math.max(48, Math.min(windowSize.width, windowSize.height) / 12)}px 'VCR OSD Mono', ui-monospace, monospace`,
-          color: "#ff0000",
-          cursor: "pointer",
-          zIndex: 150,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          transition: "none",
-          boxShadow: "0 0 20px rgba(255, 0, 0, 0.5)",
-          imageRendering: "pixelated",
-          letterSpacing: "0",
-          textShadow: "2px 2px 0 #000000",
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.background = "rgba(255, 0, 0, 0.3)";
-          e.currentTarget.style.color = "#ffffff";
-          e.currentTarget.style.transform = "translateX(-50%)";
-          e.currentTarget.style.boxShadow = "0 0 30px rgba(255, 0, 0, 0.8)";
-          e.currentTarget.style.textShadow = "2px 2px 0 #ff0000";
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.background = "rgba(0, 0, 0, 0.8)";
-          e.currentTarget.style.color = "#ff0000";
-          e.currentTarget.style.transform = "translateX(-50%)";
-          e.currentTarget.style.boxShadow = "0 0 20px rgba(255, 0, 0, 0.5)";
-          e.currentTarget.style.textShadow = "2px 2px 0 #000000";
-        }}
-      >
-        ×
-      </button>
-      )}
+      <RetroSceneOverlays
+        breadcrumbs={breadcrumbs}
+        windowSize={windowSize}
+        canGoBack={canGoBack}
+        currentPath={currentPath}
+        onNavigateBack={handleBack}
+        onNavigateToComputer={navigateToComputer}
+        onLoadDirectory={(path) => loadDirectoryRef.current?.(path)}
+        onLoadMecha={() => loadMechaRef.current?.()}
+      />
     </>
   );
 }
