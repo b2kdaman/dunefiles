@@ -421,7 +421,7 @@ export function enterFlightMode(
 
   // Bullet system
   const bullets: Bullet[] = [];
-  const bulletGeometry = new THREE.SphereGeometry(0.1, 8, 8);
+  const bulletGeometry = new THREE.SphereGeometry(0.06, 8, 8);
 
   function shoot() {
     if (!flightState.active) return;
@@ -438,31 +438,28 @@ export function enterFlightMode(
     const right = new THREE.Vector3(1, 0, 0);
     right.applyQuaternion(camera.quaternion);
 
-    // Spawn two bullets from sides
-    [-1, 1].forEach((side) => {
-      const mat = new THREE.MeshStandardMaterial({
-        color: 0xff2222,
-        emissive: 0xff0000,
-        emissiveIntensity: 2.5,
-        transparent: true,
-        opacity: 1,
-      });
-      const bullet = new THREE.Mesh(bulletGeometry, mat);
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0xff2222,
+      emissive: 0xff0000,
+      emissiveIntensity: 2.5,
+      transparent: true,
+      opacity: 1,
+    });
+    const bullet = new THREE.Mesh(bulletGeometry, mat);
 
-      // Position at side of cockpit
-      bullet.position.copy(flightState.position);
-      bullet.position.add(right.clone().multiplyScalar(side * 1.5));
-      bullet.position.add(new THREE.Vector3(0, -0.3, 0));
+    // Position at center of cockpit
+    bullet.position.copy(flightState.position);
+    bullet.position.add(forward.clone().multiplyScalar(1.2));
+    bullet.position.add(new THREE.Vector3(0, -0.2, 0));
 
-      // Add glow
-      bullet.layers.enable(BLOOM_LAYER);
+    // Add glow
+    bullet.layers.enable(BLOOM_LAYER);
 
-      scene.add(bullet);
-      bullets.push({
-        mesh: bullet,
-        velocity: forward.clone().multiplyScalar(80),
-        life: 0,
-      });
+    scene.add(bullet);
+    bullets.push({
+      mesh: bullet,
+      velocity: forward.clone().multiplyScalar(80),
+      life: 0,
     });
   }
 
@@ -472,11 +469,22 @@ export function enterFlightMode(
       b.life += delta;
       b.mesh.position.add(b.velocity.clone().multiplyScalar(delta * 0.001));
 
-      const hitRadius = 0.6;
+      const hitRadius = 0.45;
       for (const target of navigatorTargets) {
         const mesh = target.mesh;
         if (b.mesh.position.distanceTo(mesh.position) <= hitRadius) {
           const body = mesh.userData?.physicsBody as CANNON.Body | undefined;
+          const hitMat = mesh.material as THREE.MeshStandardMaterial;
+          if (hitMat && hitMat.emissive) {
+            const prevEmissive = hitMat.emissive.getHex();
+            const prevIntensity = hitMat.emissiveIntensity ?? 0;
+            hitMat.emissive.setHex(0xff0000);
+            hitMat.emissiveIntensity = 2.0;
+            setTimeout(() => {
+              hitMat.emissive.setHex(prevEmissive);
+              hitMat.emissiveIntensity = prevIntensity;
+            }, 120);
+          }
           const impulseDir = b.velocity.clone().normalize();
           if (body) {
             body.applyImpulse(
