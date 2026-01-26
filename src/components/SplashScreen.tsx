@@ -6,7 +6,6 @@ interface SplashScreenProps {
 }
 
 export default function SplashScreen({ onComplete }: SplashScreenProps) {
-  const [pixelSize, setPixelSize] = useState(30); // Start with large pixels
   const [opacity, setOpacity] = useState(1);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -103,7 +102,6 @@ export default function SplashScreen({ onComplete }: SplashScreenProps) {
       const eased = 1 - Math.pow(1 - progress, 3);
       const currentPixelSize = startPixelSize - (startPixelSize - endPixelSize) * eased;
 
-      setPixelSize(currentPixelSize);
       renderText(currentPixelSize);
 
       if (progress < 1) {

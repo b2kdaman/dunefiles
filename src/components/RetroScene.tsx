@@ -12,6 +12,8 @@ import { Line2 } from "three/examples/jsm/lines/Line2.js";
 import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
 import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import { CSS2DRenderer, CSS2DObject } from "three/examples/jsm/renderers/CSS2DRenderer.js";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader.js";
 import { useSceneStore, type FileEntry } from "../store/sceneStore";
 import type { Settings } from "../types";
 
@@ -130,8 +132,8 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
     scene: THREE.Scene;
     world: CANNON.World;
     sceneObjects: SceneObject[];
-    createFolder: (entry: FileEntry, position: THREE.Vector3, velocity: THREE.Vector3) => SceneObject;
-    createFile: (entry: FileEntry, position: THREE.Vector3, velocity: THREE.Vector3) => SceneObject;
+    createFolder: (entry: FileEntry, position: THREE.Vector3, velocity: THREE.Vector3, maxSize: number) => SceneObject;
+    createFile: (entry: FileEntry, position: THREE.Vector3, velocity: THREE.Vector3, maxSize: number) => SceneObject;
     removeObject: (obj: SceneObject) => void;
     spawnEntries: (entries: FileEntry[]) => void;
     exitAnims: ExitAnim[];
@@ -142,6 +144,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
   const navigateBackRef = useRef<(() => void) | null>(null);
   const loadDirectoryRef = useRef<((path: string) => Promise<void>) | null>(null);
   const [windowSize, setWindowSize] = useState({ width: window.innerWidth, height: window.innerHeight });
+  const loadMechaRef = useRef<(() => void) | null>(null);
 
   type ExitAnim = {
     obj: SceneObject;
@@ -735,10 +738,22 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
           elementBelow.dispatchEvent(new MouseEvent(e.type, e));
         }
       };
+
+      // Pass through wheel events
+      const passThroughWheel = (e: WheelEvent) => {
+        div.style.pointerEvents = "none";
+        const elementBelow = document.elementFromPoint(e.clientX, e.clientY);
+        div.style.pointerEvents = "auto";
+        if (elementBelow && elementBelow !== div) {
+          elementBelow.dispatchEvent(new WheelEvent(e.type, e));
+        }
+      };
+
       div.addEventListener("mousedown", passThrough);
       div.addEventListener("mouseup", passThrough);
       div.addEventListener("mousemove", passThrough);
       div.addEventListener("dblclick", passThrough);
+      div.addEventListener("wheel", passThroughWheel);
 
       const label = new CSS2DObject(div);
       // Position based on base geometry height (not scaled)
@@ -969,7 +984,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
       // Remove CSS2D labels (children of mesh)
       const toRemove: THREE.Object3D[] = [];
       obj.mesh.traverse((child) => {
-        if ((child as CSS2DObject).isCSS2DObject) {
+        if (child instanceof CSS2DObject) {
           toRemove.push(child);
           // Remove the DOM element
           const css2d = child as CSS2DObject;
@@ -1173,10 +1188,137 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
       }
     }
 
+    // Load mecha model
+    function loadMecha() {
+      const loader = new GLTFLoader();
+
+      // Set up Draco loader for compressed geometries
+      const dracoLoader = new DRACOLoader();
+      dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
+      loader.setDRACOLoader(dracoLoader);
+
+      loader.load(
+        "/src/assets/mecha.glb",
+        (gltf) => {
+          const mecha = gltf.scene;
+
+          // Position at top center
+          mecha.position.set(0, 8, 0);
+          mecha.scale.set(0.05, 0.05, 0.05);
+
+          // Add red edges to all meshes
+          const edgeLines: Line2[] = [];
+          mecha.traverse((child) => {
+            if ((child as THREE.Mesh).isMesh) {
+              const mesh = child as THREE.Mesh;
+              mesh.castShadow = true;
+
+              // Apply red material tint
+              if (mesh.material) {
+                const mat = mesh.material as THREE.MeshStandardMaterial;
+                if (mat.color) {
+                  // Tint material red
+                  mat.color.multiplyScalar(0.3);
+                  mat.color.r = Math.max(mat.color.r, 1.0);
+                  mat.color.g *= 0.3;
+                  mat.color.b *= 0.3;
+                }
+                mat.emissive = new THREE.Color(0x660000);
+                mat.emissiveIntensity = 0.5;
+              }
+
+              // Create red edges
+              if (mesh.geometry) {
+                const edges = createThickEdges(mesh.geometry, 0xff0000, 2, 15);
+                edges.position.copy(mesh.position);
+                edges.rotation.copy(mesh.rotation);
+                edges.scale.copy(mesh.scale);
+                mecha.add(edges);
+                edgeLines.push(edges);
+              }
+            }
+          });
+
+          scene.add(mecha);
+
+          // Disable controls
+          controls.enabled = false;
+
+          // Get the center of the mecha model
+          const box = new THREE.Box3().setFromObject(mecha);
+          const center = box.getCenter(new THREE.Vector3());
+
+          // Animate camera to focus on mecha
+          const startPos = camera.position.clone();
+          const startTarget = controls.target.clone();
+          const endPos = new THREE.Vector3(0, center.y, 12);
+          const endTarget = center;
+          const focusDuration = 2000;
+          const focusStartTime = performance.now();
+
+          function animateCamera() {
+            const elapsed = performance.now() - focusStartTime;
+            const t = Math.min(elapsed / focusDuration, 1);
+            const eased = t * t * t; // ease in cubic
+
+            camera.position.lerpVectors(startPos, endPos, eased);
+            controls.target.lerpVectors(startTarget, endTarget, eased);
+            camera.lookAt(controls.target);
+
+            if (t < 1) {
+              requestAnimationFrame(animateCamera);
+            } else {
+              // Start orbit animation after focus completes
+              orbitCamera();
+            }
+          }
+
+          function orbitCamera() {
+            const orbitDuration = 1500; // 1.5 seconds
+            const orbitStartTime = performance.now();
+            const orbitRadius = 12;
+
+            function animate() {
+              const elapsed = performance.now() - orbitStartTime;
+              const t = Math.min(elapsed / orbitDuration, 1);
+              const eased = t * t * t; // ease in cubic
+
+              // Full circle (2 * PI radians)
+              const angle = eased * Math.PI * 2;
+
+              // Camera orbits at same Y level as model center
+              camera.position.x = center.x + Math.sin(angle) * orbitRadius;
+              camera.position.y = center.y;
+              camera.position.z = center.z + Math.cos(angle) * orbitRadius;
+
+              // Keep looking at center
+              controls.target.copy(center);
+              camera.lookAt(controls.target);
+
+              if (t < 1) {
+                requestAnimationFrame(animate);
+              }
+            }
+
+            animate();
+          }
+
+          animateCamera();
+        },
+        (progress) => {
+          console.log("Loading mecha:", (progress.loaded / progress.total * 100).toFixed(2) + "%");
+        },
+        (error) => {
+          console.error("Error loading mecha:", error);
+        }
+      );
+    }
+
     // Store ref for external access
     sceneRef.current = { scene, world, sceneObjects, createFolder, createFile, removeObject, spawnEntries, exitAnims, returnToComputer };
     navigateBackRef.current = navigateBack;
     loadDirectoryRef.current = loadDirectory;
+    loadMechaRef.current = loadMecha;
 
     // Load initial disks/home directory
     (async () => {
@@ -1251,6 +1393,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
     const intersection = new THREE.Vector3();
     let draggedObject: SceneObject | null = null;
     let dragConstraint: CANNON.PointToPointConstraint | null = null;
+    let dragStartPosition: CANNON.Vec3 | null = null;
 
     const mouseBody = new CANNON.Body({ mass: 0 });
     world.addBody(mouseBody);
@@ -1327,6 +1470,14 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
         if (hitObj && !hitObj.isExiting && !hitObj.isDisk) {
           controls.enabled = false;
           draggedObject = hitObj;
+
+          // Store initial position
+          dragStartPosition = new CANNON.Vec3(
+            hitObj.body.position.x,
+            hitObj.body.position.y,
+            hitObj.body.position.z
+          );
+
           playPickup();
 
           // Spawn click particles
@@ -1388,8 +1539,11 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
         playDrop();
         startScaleAnim(draggedObject, draggedObject.originalScale, 400);
         const mat = draggedObject.mesh.material as THREE.MeshStandardMaterial;
+
+        // Restore original colors
         mat.emissive.setHex(draggedObject.originalEmissive);
         mat.emissiveIntensity = draggedObject.originalEmissiveIntensity;
+
         draggedObject.mesh.layers.disable(BLOOM_LAYER);
         draggedObject.edges.layers.disable(BLOOM_LAYER);
         bloomActive = false;
@@ -1399,6 +1553,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
         dragConstraint = null;
       }
       draggedObject = null;
+      dragStartPosition = null;
       controls.enabled = true;
     }
 
@@ -1413,7 +1568,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
     renderer.domElement.addEventListener("mousedown", onMouseDown);
     renderer.domElement.addEventListener("mousemove", onMouseMove);
     renderer.domElement.addEventListener("mouseup", onMouseUp);
-    renderer.domElement.addEventListener("mouseleave", onMouseUp);
+    renderer.domElement.addEventListener("mouseleave", (e) => onMouseUp(e as MouseEvent));
     renderer.domElement.addEventListener("dblclick", onDoubleClick);
     window.addEventListener("keydown", onKeyDown);
 
@@ -1592,7 +1747,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
 
           // Update label opacity
           obj.mesh.traverse((child) => {
-            if ((child as CSS2DObject).isCSS2DObject) {
+            if (child instanceof CSS2DObject) {
               const label = child as CSS2DObject;
               label.element.style.opacity = isOccluded ? "0.2" : "1";
             }
@@ -1644,7 +1799,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
       const screenScale = Math.min(newWidth, newHeight) / 1000;
       for (const obj of sceneObjects) {
         obj.mesh.traverse((child) => {
-          if ((child as CSS2DObject).isCSS2DObject) {
+          if (child instanceof CSS2DObject) {
             const label = child as CSS2DObject;
             const div = label.element;
 
@@ -1835,6 +1990,56 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
         >
           ← Back
         </button>
+      )}
+
+      {/* Big X Button - Only show when in folders, not at computer/disks level */}
+      {currentPath !== "" && (
+        <button
+        onClick={() => {
+          if (loadMechaRef.current) {
+            loadMechaRef.current();
+          }
+        }}
+        style={{
+          position: "absolute",
+          bottom: Math.max(20, Math.min(windowSize.width, windowSize.height) / 30),
+          left: "50%",
+          transform: "translateX(-50%)",
+          background: "rgba(0, 0, 0, 0.8)",
+          border: "4px solid #ff0000",
+          borderRadius: "0",
+          width: Math.max(80, Math.min(windowSize.width, windowSize.height) / 8),
+          height: Math.max(80, Math.min(windowSize.width, windowSize.height) / 8),
+          font: `bold ${Math.max(48, Math.min(windowSize.width, windowSize.height) / 12)}px 'VCR OSD Mono', ui-monospace, monospace`,
+          color: "#ff0000",
+          cursor: "pointer",
+          zIndex: 150,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          transition: "none",
+          boxShadow: "0 0 20px rgba(255, 0, 0, 0.5)",
+          imageRendering: "pixelated",
+          letterSpacing: "0",
+          textShadow: "2px 2px 0 #000000",
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = "rgba(255, 0, 0, 0.3)";
+          e.currentTarget.style.color = "#ffffff";
+          e.currentTarget.style.transform = "translateX(-50%)";
+          e.currentTarget.style.boxShadow = "0 0 30px rgba(255, 0, 0, 0.8)";
+          e.currentTarget.style.textShadow = "2px 2px 0 #ff0000";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = "rgba(0, 0, 0, 0.8)";
+          e.currentTarget.style.color = "#ff0000";
+          e.currentTarget.style.transform = "translateX(-50%)";
+          e.currentTarget.style.boxShadow = "0 0 20px rgba(255, 0, 0, 0.5)";
+          e.currentTarget.style.textShadow = "2px 2px 0 #000000";
+        }}
+      >
+        ×
+      </button>
       )}
     </>
   );
