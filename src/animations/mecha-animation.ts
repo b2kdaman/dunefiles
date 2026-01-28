@@ -52,13 +52,6 @@ const beamShader = {
   `,
 };
 
-type CreateThickEdgesFn = (
-  geometry: THREE.BufferGeometry,
-  color: number,
-  lineWidth: number,
-  thresholdAngle?: number
-) => Line2;
-
 /**
  * Load and animate the mecha model with beam effect.
  */
@@ -67,7 +60,6 @@ export function loadMechaAnimation(
   camera: THREE.PerspectiveCamera,
   controls: OrbitControls,
   renderer: THREE.WebGLRenderer,
-  createThickEdges: CreateThickEdgesFn,
   BLOOM_LAYER: number,
   onComplete?: () => void
 ): void {

@@ -7,7 +7,7 @@ import type { Line2 } from "three/examples/jsm/lines/Line2.js";
 import type { FlightState, Bullet } from "./types";
 import { playShoot, ensureAudio, startIdleMusic } from "./sound-effects";
 import { resetCameraToDefault } from "./camera-animation";
-import { createFlightRadar } from "./flight-radar";
+import { createFlightRadar, type RadarTarget } from "./flight-radar";
 
 let flightModeActive = false;
 
@@ -301,18 +301,19 @@ export function enterFlightMode(
 
   const altitudeTextEl = document.getElementById("flight-altitude-text");
   const targetLabelEl = document.getElementById("flight-target-label");
-  const navigatorTargets = scene.children
+  type NavigatorTarget = RadarTarget & { name: string; size: string; sizeBytes?: number };
+  const navigatorTargets: NavigatorTarget[] = scene.children
     .filter((child) => (child as THREE.Mesh).isMesh)
     .filter((child) => (child as THREE.Mesh).userData?.isNavigatorTarget)
     .map((child) => ({
       mesh: child as THREE.Mesh,
-      type: (child as THREE.Mesh).userData?.navigatorType as string,
+      type: (child as THREE.Mesh).userData?.navigatorType === "diamond" ? "diamond" : "circle",
       name: (child as THREE.Mesh).userData?.navigatorName as string,
       size: (child as THREE.Mesh).userData?.navigatorSize as string,
       sizeBytes: (child as THREE.Mesh).userData?.navigatorSizeBytes as number | undefined,
     }));
 
-  const radar = createFlightRadar(navigatorTargets);
+  const radar = createFlightRadar(navigatorTargets.map(({ mesh, type }) => ({ mesh, type })));
   cockpitOverlay.appendChild(radar.element);
 
   const farBeamHeight = 2000;

@@ -5,7 +5,7 @@ import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { DitherPixelShader } from "./shaders";
 
-type RenderPipeline = {
+export type RenderPipeline = {
   composer: EffectComposer;
   bloomComposer: EffectComposer;
   bloomPass: UnrealBloomPass;

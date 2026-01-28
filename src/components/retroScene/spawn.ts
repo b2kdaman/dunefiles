@@ -146,6 +146,7 @@ export function createSpawnFactory({ scene, world, defaultMaterial, sceneObjects
         emissiveIntensity: 0.35,
       })
     );
+    const sizeStr = formatSize(entry.size);
     mesh.castShadow = true;
     mesh.scale.set(0.7 * scale, 1 * scale, 0.7 * scale);
     mesh.userData = {
@@ -172,7 +173,6 @@ export function createSpawnFactory({ scene, world, defaultMaterial, sceneObjects
     const edges = createThickEdges(geo, 0xff0000, 3, 1);
     edges.scale.set(0.7 * scale, 1 * scale, 0.7 * scale);
 
-    const sizeStr = formatSize(entry.size);
     mesh.add(createLabel(entry.name, sizeStr, scale, DIAMOND_RADIUS));
 
     scene.add(mesh);
@@ -221,6 +221,20 @@ export function createSpawnFactory({ scene, world, defaultMaterial, sceneObjects
         emissiveIntensity: 0.2,
       })
     );
+    // Format available space - values might already be in GB or different unit
+    let availableGB = disk.available_space;
+    let totalGB = disk.total_space;
+
+    // If values seem to be in bytes (very large numbers), convert to GB
+    if (disk.total_space > 1000000) {
+      totalGB = disk.total_space / (1024 * 1024 * 1024);
+      availableGB = disk.available_space / (1024 * 1024 * 1024);
+    }
+
+    console.log(`Disk ${disk.name}: ${availableGB.toFixed(1)} GB free of ${totalGB.toFixed(1)} GB total`);
+
+    const sizeLabel = availableGB < 0.1 ? "empty" : `${availableGB.toFixed(1)} GB free`;
+
     mesh.castShadow = true;
     mesh.scale.set(scale, scale, scale);
     mesh.userData = {
@@ -251,20 +265,6 @@ export function createSpawnFactory({ scene, world, defaultMaterial, sceneObjects
     console.log(`Raw disk data for ${disk.name}:`, disk);
     console.log(`  total_space: ${disk.total_space}`);
     console.log(`  available_space: ${disk.available_space}`);
-
-    // Format available space - values might already be in GB or different unit
-    let availableGB = disk.available_space;
-    let totalGB = disk.total_space;
-
-    // If values seem to be in bytes (very large numbers), convert to GB
-    if (disk.total_space > 1000000) {
-      totalGB = disk.total_space / (1024 * 1024 * 1024);
-      availableGB = disk.available_space / (1024 * 1024 * 1024);
-    }
-
-    console.log(`Disk ${disk.name}: ${availableGB.toFixed(1)} GB free of ${totalGB.toFixed(1)} GB total`);
-
-    const sizeLabel = availableGB < 0.1 ? "empty" : `${availableGB.toFixed(1)} GB free`;
 
     mesh.add(createLabel(disk.name, sizeLabel, scale, cubeSize / 2));
 

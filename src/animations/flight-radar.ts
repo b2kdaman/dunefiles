@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import type { FlightState } from "./types";
 
-type RadarTarget = {
+export type RadarTarget = {
   mesh: THREE.Mesh;
   type: "circle" | "diamond";
 };

@@ -13,8 +13,8 @@ let idleMusic: HTMLAudioElement | null = null;
 let actionMusic: HTMLAudioElement | null = null;
 let pendingMusic: "idle" | "action" | null = null;
 let musicFadeTimer: number | null = null;
-let idleBaseVolume = 0.5;
-let idleDuckedVolume = 0.15;
+const idleBaseVolume = 0.5;
+const idleDuckedVolume = 0.15;
 
 export function initSoundSystem() {
   if (initialized) return;
