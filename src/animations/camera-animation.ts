@@ -56,8 +56,8 @@ export function orbitCamera(
     const t = Math.min(elapsed / duration, 1);
     const eased = easeInCubic(t);
 
-    // Full circle (2 * PI radians)
-    const angle = eased * Math.PI * 2;
+    // Half circle (PI radians) for a shorter orbit
+    const angle = eased * Math.PI;
 
     // Camera orbits at same Y level as model center
     camera.position.x = center.x + Math.sin(angle) * orbitRadius;
@@ -97,7 +97,7 @@ export function transitionToCockpit(
   const startTarget = controls.target.clone();
 
   // End position: behind mecha, slightly above center
-  const cockpitOffset = new THREE.Vector3(0, 1.5, -0.5);
+  const cockpitOffset = new THREE.Vector3(0, 0.0, -1.2);
   const endPos = center.clone().add(cockpitOffset);
   const endTarget = center.clone().add(new THREE.Vector3(0, 1, 10)); // Looking forward
 

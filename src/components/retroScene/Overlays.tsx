@@ -19,6 +19,7 @@ type RetroSceneOverlaysProps = {
   onNavigateToComputer: () => void;
   onLoadDirectory: (path: string) => void;
   onLoadMecha: () => void;
+  showMechaButton: boolean;
 };
 
 export default function RetroSceneOverlays({
@@ -30,6 +31,7 @@ export default function RetroSceneOverlays({
   onNavigateToComputer,
   onLoadDirectory,
   onLoadMecha,
+  showMechaButton,
 }: RetroSceneOverlaysProps) {
   const minSide = Math.min(windowSize.width, windowSize.height);
   const padY = Math.max(8, minSide / 100);
@@ -163,7 +165,7 @@ export default function RetroSceneOverlays({
       )}
 
       {/* Big X Button - Only show when in folders, not at computer/disks level */}
-      {currentPath !== "" && (
+      {currentPath !== "" && showMechaButton && (
         <button
           onClick={onLoadMecha}
           style={bigButtonStyle}

@@ -10,9 +10,9 @@ export function createLabel(name: string, size: string, scale: number, objectHei
 
   // Scale font size based on screen size and object scale (1.5x larger)
   const screenScale = Math.min(window.innerWidth, window.innerHeight) / 1000;
-  const baseFontSize = 15 * screenScale;  // 10 * 1.5
-  const fontSize = Math.round(baseFontSize + (scale - MIN_SCALE) / (MAX_SCALE - MIN_SCALE) * 9 * screenScale);  // 6 * 1.5
-  const padding = Math.round(4.5 + scale * 3);  // 3 * 1.5 and 2 * 1.5
+  const baseFontSize = 18 * screenScale;  // 1.2x minimum
+  const fontSize = Math.round(baseFontSize + (scale - MIN_SCALE) / (MAX_SCALE - MIN_SCALE) * 10.8 * screenScale);
+  const padding = Math.round(5.4 + scale * 3.6);
 
   const div = document.createElement("div");
   div.style.cssText = `
@@ -99,9 +99,9 @@ export function updateLabelFontSizes(sceneObjects: SceneObject[], screenScale: n
         const div = label.element;
 
         // Recalculate font size based on new screen size and object scale
-        const baseFontSize = 15 * screenScale;
-        const fontSize = Math.round(baseFontSize + (obj.scale - MIN_SCALE) / (MAX_SCALE - MIN_SCALE) * 9 * screenScale);
-        const padding = Math.round(4.5 + obj.scale * 3);
+        const baseFontSize = 18 * screenScale;
+        const fontSize = Math.round(baseFontSize + (obj.scale - MIN_SCALE) / (MAX_SCALE - MIN_SCALE) * 10.8 * screenScale);
+        const padding = Math.round(5.4 + obj.scale * 3.6);
 
         // Update font size in the style
         const currentFont = div.style.font;

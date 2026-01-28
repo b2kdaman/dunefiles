@@ -70,6 +70,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
   const loadDirectoryRef = useRef<((path: string) => Promise<void>) | null>(null);
   const [windowSize, setWindowSize] = useState({ width: window.innerWidth, height: window.innerHeight });
   const loadMechaRef = useRef<(() => void) | null>(null);
+  const [showMechaButton, setShowMechaButton] = useState(true);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -94,8 +95,23 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
 
     const fpsDiv = createFpsCounter(container);
     const loadingOverlay = createLoadingOverlay(container);
-    const showLoading = () => loadingOverlay.show();
-    const hideLoading = () => loadingOverlay.hide();
+    let loadingToken = 0;
+    const showLoading = (autoHideMs: number = 0) => {
+      loadingToken += 1;
+      const token = loadingToken;
+      loadingOverlay.show();
+      if (autoHideMs > 0) {
+        setTimeout(() => {
+          if (loadingToken === token) {
+            loadingOverlay.hide();
+          }
+        }, autoHideMs);
+      }
+    };
+    const hideLoading = () => {
+      loadingToken += 1;
+      loadingOverlay.hide();
+    };
 
     // Initialize sound system from animation module
     initSoundSystem();
@@ -282,7 +298,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
 
     // Load directory contents from Rust backend
     async function loadDirectory(path: string) {
-      showLoading();
+      showLoading(1500);
       try {
         const entries = await invoke<FileEntry[]>("list_directory", { path });
 
@@ -337,7 +353,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
 
     // Function to return to Computer view (disks) without sound
     async function returnToComputer() {
-      showLoading();
+      showLoading(1500);
       try {
         const disks = await invoke<DiskInfo[]>("get_disks");
 
@@ -393,13 +409,17 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
     // Load mecha model - uses extracted animation module
     function loadMecha() {
       ensureAudio();
+      setShowMechaButton(false);
       loadMechaAnimation(
         scene,
         camera,
         controls,
         renderer,
         createThickEdges,
-        BLOOM_LAYER
+        BLOOM_LAYER,
+        () => {
+          setShowMechaButton(true);
+        }
       );
     }
 
@@ -822,6 +842,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
         onNavigateToComputer={navigateToComputer}
         onLoadDirectory={(path) => loadDirectoryRef.current?.(path)}
         onLoadMecha={() => loadMechaRef.current?.()}
+        showMechaButton={showMechaButton}
       />
     </>
   );

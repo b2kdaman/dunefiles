@@ -7,6 +7,7 @@ import type { Line2 } from "three/examples/jsm/lines/Line2.js";
 import type { FlightState, Bullet } from "./types";
 import { playShoot, ensureAudio } from "./sound-effects";
 import { resetCameraToDefault } from "./camera-animation";
+import { createFlightRadar } from "./flight-radar";
 
 let flightModeActive = false;
 
@@ -179,71 +180,22 @@ function createCockpitOverlay(): HTMLDivElement {
   hudText.innerHTML =
     "FLIGHT MODE<br><span style='font-size: 12px; color: #ff6666;'>W/S: Speed | A/D: Strafe | Q/E: Roll | Mouse: Aim | Click: Fire | ESC: Exit</span>";
 
-  const navigator = document.createElement("div");
-  navigator.id = "flight-navigator";
-  navigator.style.cssText = `
-    position: absolute;
-    top: 16px;
-    right: 16px;
-    width: 140px;
-    height: 140px;
-    border: 2px solid #ff0000;
-    background: radial-gradient(circle, rgba(80, 0, 0, 0.55) 0%, rgba(10, 0, 0, 0.6) 70%);
-    box-shadow: 0 0 16px rgba(255, 0, 0, 0.3);
-    border-radius: 12px;
-    pointer-events: none;
-  `;
-  const navigatorCenter = document.createElement("div");
-  navigatorCenter.style.cssText = `
-    position: absolute;
-    left: 50%;
-    top: 50%;
-    width: 6px;
-    height: 6px;
-    background: #ff4444;
-    border-radius: 50%;
-    transform: translate(-50%, -50%);
-  `;
-  navigator.appendChild(navigatorCenter);
-
-  const navigatorHeading = document.createElement("div");
-  navigatorHeading.id = "flight-navigator-heading";
-  navigatorHeading.style.cssText = `
-    position: absolute;
-    width: 6px;
-    height: 6px;
-    background: #ffffff;
-    border-radius: 50%;
-    transform: translate(-50%, -50%);
-    box-shadow: 0 0 6px rgba(255, 255, 255, 0.6);
-  `;
-  navigator.appendChild(navigatorHeading);
-
-  const navigatorText = document.createElement("div");
-  navigatorText.id = "flight-navigator-text";
-  navigatorText.style.cssText = `
-    position: absolute;
-    bottom: 6px;
-    left: 50%;
-    transform: translateX(-50%);
-    font: 11px 'VCR OSD Mono', ui-monospace, monospace;
-    color: #ff6666;
-    letter-spacing: 1px;
-    text-shadow: 0 0 6px rgba(255, 0, 0, 0.4);
-  `;
-  navigator.appendChild(navigatorText);
-
   const targetLabel = document.createElement("div");
   targetLabel.id = "flight-target-label";
   targetLabel.style.cssText = `
     position: absolute;
-    top: 50px;
+    top: -28px;
     left: 50%;
     transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.7);
+    border: 3px solid #ff0000;
+    padding: 8px 24px;
     font: 16px 'VCR OSD Mono', ui-monospace, monospace;
-    color: #ff6666;
-    letter-spacing: 1px;
-    text-shadow: 0 0 8px rgba(255, 0, 0, 0.4);
+    color: #ffffff;
+    letter-spacing: 1.5px;
+    text-shadow: 0 0 8px rgba(255, 0, 0, 0.3);
+    text-align: center;
+    min-width: 220px;
     display: none;
     pointer-events: none;
   `;
@@ -269,10 +221,9 @@ function createCockpitOverlay(): HTMLDivElement {
   cockpitOverlay.appendChild(crosshairOuter);
   cockpitOverlay.appendChild(crosshair);
   cockpitOverlay.appendChild(hudText);
-  cockpitOverlay.appendChild(navigator);
   cockpitOverlay.appendChild(customCursor);
   crosshairOuter.appendChild(altitudeText);
-  cockpitOverlay.appendChild(targetLabel);
+  crosshairOuter.appendChild(targetLabel);
 
   return cockpitOverlay;
 }
@@ -312,6 +263,7 @@ export function enterFlightMode(
   BLOOM_LAYER: number,
   onExit: () => void
 ): void {
+  const DAMAGE_PER_HIT = 150;
   flightModeActive = true;
   // Create and add cockpit overlay
   const cockpitOverlay = createCockpitOverlay();
@@ -347,12 +299,8 @@ export function enterFlightMode(
   // Initialize flight state
   const flightState = createFlightState(center.clone().add(new THREE.Vector3(0, 1.5, 0)));
 
-  const navigatorEl = document.getElementById("flight-navigator");
-  const navigatorTextEl = document.getElementById("flight-navigator-text");
   const altitudeTextEl = document.getElementById("flight-altitude-text");
-  const navigatorHeadingEl = document.getElementById("flight-navigator-heading");
   const targetLabelEl = document.getElementById("flight-target-label");
-  const navigatorMarkers: HTMLDivElement[] = [];
   const navigatorTargets = scene.children
     .filter((child) => (child as THREE.Mesh).isMesh)
     .filter((child) => (child as THREE.Mesh).userData?.isNavigatorTarget)
@@ -360,7 +308,12 @@ export function enterFlightMode(
       mesh: child as THREE.Mesh,
       type: (child as THREE.Mesh).userData?.navigatorType as string,
       name: (child as THREE.Mesh).userData?.navigatorName as string,
+      size: (child as THREE.Mesh).userData?.navigatorSize as string,
+      sizeBytes: (child as THREE.Mesh).userData?.navigatorSizeBytes as number | undefined,
     }));
+
+  const radar = createFlightRadar(navigatorTargets);
+  cockpitOverlay.appendChild(radar.element);
 
   const farBeamHeight = 2000;
   const farBeamDistance = 35;
@@ -393,35 +346,10 @@ export function enterFlightMode(
   const aimRaycaster = new THREE.Raycaster();
   const aimNdc = new THREE.Vector2(0, 0);
 
-  if (navigatorEl) {
-    navigatorTargets.forEach((target) => {
-      const marker = document.createElement("div");
-      if (target.type === "diamond") {
-        marker.style.cssText = `
-          position: absolute;
-          width: 8px;
-          height: 8px;
-          background: rgba(255, 110, 110, 0.85);
-          transform: translate(-50%, -50%) rotate(45deg);
-        `;
-      } else {
-        marker.style.cssText = `
-          position: absolute;
-          width: 8px;
-          height: 8px;
-          background: rgba(255, 80, 80, 0.85);
-          border-radius: 50%;
-          transform: translate(-50%, -50%);
-        `;
-      }
-      navigatorEl.appendChild(marker);
-      navigatorMarkers.push(marker);
-    });
-  }
-
   // Bullet system
   const bullets: Bullet[] = [];
   const bulletGeometry = new THREE.SphereGeometry(0.06, 8, 8);
+  const bulletRaycaster = new THREE.Raycaster();
 
   function shoot() {
     if (!flightState.active) return;
@@ -433,10 +361,6 @@ export function enterFlightMode(
     // Get forward direction from camera
     const forward = new THREE.Vector3(0, 0, -1);
     forward.applyQuaternion(camera.quaternion);
-
-    // Get right direction for offset
-    const right = new THREE.Vector3(1, 0, 0);
-    right.applyQuaternion(camera.quaternion);
 
     const mat = new THREE.MeshStandardMaterial({
       color: 0xff2222,
@@ -460,6 +384,7 @@ export function enterFlightMode(
       mesh: bullet,
       velocity: forward.clone().multiplyScalar(80),
       life: 0,
+      lastPos: bullet.position.clone(),
     });
   }
 
@@ -467,45 +392,61 @@ export function enterFlightMode(
     for (let i = bullets.length - 1; i >= 0; i--) {
       const b = bullets[i];
       b.life += delta;
-      b.mesh.position.add(b.velocity.clone().multiplyScalar(delta * 0.001));
+      const nextPos = b.mesh.position.clone().add(b.velocity.clone().multiplyScalar(delta * 0.001));
+      const travel = nextPos.clone().sub(b.mesh.position);
+      const travelLen = travel.length();
+      let hitMesh: THREE.Mesh | null = null;
 
-      const hitRadius = 0.45;
-      for (const target of navigatorTargets) {
-        const mesh = target.mesh;
-        if (b.mesh.position.distanceTo(mesh.position) <= hitRadius) {
-          const body = mesh.userData?.physicsBody as CANNON.Body | undefined;
-          const hitMat = mesh.material as THREE.MeshStandardMaterial;
-          if (hitMat && hitMat.emissive) {
-            const prevEmissive = hitMat.emissive.getHex();
-            const prevIntensity = hitMat.emissiveIntensity ?? 0;
-            hitMat.emissive.setHex(0xff0000);
-            hitMat.emissiveIntensity = 2.0;
-            setTimeout(() => {
-              hitMat.emissive.setHex(prevEmissive);
-              hitMat.emissiveIntensity = prevIntensity;
-            }, 120);
-          }
-          const impulseDir = b.velocity.clone().normalize();
-          if (body) {
-            body.applyImpulse(
-              new CANNON.Vec3(impulseDir.x * 0.35, impulseDir.y * 0.35, impulseDir.z * 0.35),
-              body.position
-            );
-          } else {
-            mesh.position.add(impulseDir.multiplyScalar(0.05));
-          }
-          scene.remove(b.mesh);
-          (b.mesh.material as THREE.Material).dispose();
-          bullets.splice(i, 1);
-          break;
+      if (travelLen > 0) {
+        bulletRaycaster.set(b.mesh.position, travel.normalize());
+        const hits = bulletRaycaster.intersectObjects(navigatorTargets.map((t) => t.mesh), false);
+        const hit = hits.find((h) => h.distance <= travelLen + 0.2);
+        if (hit) {
+          hitMesh = hit.object as THREE.Mesh;
         }
       }
+
+      if (hitMesh) {
+        const hitMat = hitMesh.material as THREE.MeshStandardMaterial;
+        if (hitMat && hitMat.emissive) {
+          const prevEmissive = hitMat.emissive.getHex();
+          const prevIntensity = hitMat.emissiveIntensity ?? 0;
+          hitMat.emissive.setHex(0xff0000);
+          hitMat.emissiveIntensity = 2.0;
+          setTimeout(() => {
+            hitMat.emissive.setHex(prevEmissive);
+            hitMat.emissiveIntensity = prevIntensity;
+          }, 120);
+        }
+        const body = hitMesh.userData?.physicsBody as CANNON.Body | undefined;
+        const impulseDir = b.velocity.clone().normalize();
+        if (body) {
+          body.applyImpulse(
+            new CANNON.Vec3(impulseDir.x * 0.35, impulseDir.y * 0.35, impulseDir.z * 0.35),
+            body.position
+          );
+        } else {
+          hitMesh.position.add(impulseDir.multiplyScalar(0.05));
+        }
+        const maxHp = hitMesh.userData?.navigatorSizeBytes
+          ? Math.max(10, Math.round(hitMesh.userData.navigatorSizeBytes / (1024 * 1024)))
+          : 10;
+        const currentHp = Math.max(0, (hitMesh.userData?.currentHp ?? maxHp) - DAMAGE_PER_HIT);
+        hitMesh.userData.currentHp = currentHp;
+        scene.remove(b.mesh);
+        (b.mesh.material as THREE.Material).dispose();
+        bullets.splice(i, 1);
+        continue;
+      }
+
+      b.mesh.position.copy(nextPos);
+      b.lastPos.copy(nextPos);
 
       // Fade out
       const fadeStart = 500;
       const maxLife = 1500;
       if (b.life > fadeStart) {
-        (b.mesh.material as THREE.MeshBasicMaterial).opacity =
+        (b.mesh.material as THREE.MeshStandardMaterial).opacity =
           1 - (b.life - fadeStart) / (maxLife - fadeStart);
       }
 
@@ -643,6 +584,8 @@ export function enterFlightMode(
     flightGroundGeometry.dispose();
     flightGroundMaterial.dispose();
 
+    radar.dispose();
+
     farBeams.forEach((beam) => {
       scene.remove(beam);
     });
@@ -719,59 +662,19 @@ export function enterFlightMode(
     // Update bullets
     updateBullets(delta);
 
-    if (navigatorEl) {
-      const rect = navigatorEl.getBoundingClientRect();
-      const radius = Math.min(rect.width, rect.height) * 0.42;
-      const centerX = rect.width / 2;
-      const centerY = rect.height / 2;
+    radar.update(camera, flightState);
 
-      if (navigatorHeadingEl) {
-        const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
-        const len = Math.hypot(forward.x, forward.z);
-        if (len > 0.0001) {
-          const nx = forward.x / len;
-          const ny = -forward.z / len;
-          navigatorHeadingEl.style.left = `${centerX + nx * radius}px`;
-          navigatorHeadingEl.style.top = `${centerY + ny * radius}px`;
-          navigatorHeadingEl.style.display = "block";
-        } else {
-          navigatorHeadingEl.style.display = "none";
-        }
+    for (const target of navigatorTargets) {
+      const targetPos = target.mesh.position;
+      const dx = targetPos.x - flightState.position.x;
+      const dz = targetPos.z - flightState.position.z;
+      const dist = Math.hypot(dx, dz);
+      const beam = farBeams.get(target.mesh);
+      if (beam) {
+        beam.position.x = targetPos.x;
+        beam.position.z = targetPos.z;
+        beam.visible = dist >= farBeamDistance;
       }
-
-      const yaw = flightState.yaw + Math.PI / 2;
-      const cosYaw = Math.cos(-yaw);
-      const sinYaw = Math.sin(-yaw);
-
-      for (let i = 0; i < navigatorTargets.length; i++) {
-        const target = navigatorTargets[i];
-        const marker = navigatorMarkers[i];
-        const targetPos = target.mesh.position;
-        const dx = targetPos.x - flightState.position.x;
-        const dz = targetPos.z - flightState.position.z;
-
-        const rx = dx * cosYaw - dz * sinYaw;
-        const rz = dx * sinYaw + dz * cosYaw;
-        const dist = Math.hypot(rx, rz) || 1;
-        const scaled = Math.min(radius, dist * 0.15);
-        const nx = (rx / dist) * scaled;
-        const ny = (rz / dist) * scaled;
-
-        marker.style.left = `${centerX + nx}px`;
-        marker.style.top = `${centerY - ny}px`;
-        marker.style.opacity = dist > radius / 0.15 ? "0.5" : "0.9";
-
-        const beam = farBeams.get(target.mesh);
-        if (beam) {
-          beam.position.x = targetPos.x;
-          beam.position.z = targetPos.z;
-          beam.visible = dist >= farBeamDistance;
-        }
-      }
-    }
-
-    if (navigatorTextEl) {
-      navigatorTextEl.textContent = `X ${flightState.position.x.toFixed(1)}  Z ${flightState.position.z.toFixed(1)}`;
     }
     if (altitudeTextEl) {
       const altitude = Math.max(0, flightState.position.y + 1.2);
@@ -788,7 +691,18 @@ export function enterFlightMode(
         const hit = intersects[0].object as THREE.Mesh;
         const target = navigatorTargets.find((t) => t.mesh === hit);
         if (target?.name) {
-          targetLabelEl.textContent = target.name;
+          const maxHp = target.sizeBytes
+            ? Math.max(10, Math.round(target.sizeBytes / (1024 * 1024)))
+            : 10;
+          const currentHp = Math.max(0, target.mesh.userData?.currentHp ?? maxHp);
+          const sizeLine = target.size ? `<div style="color:#888">${target.size}</div>` : "";
+          const hpRatio = maxHp > 0 ? Math.max(0, Math.min(1, currentHp / maxHp)) : 0;
+          const hpBar = `
+            <div style="margin-top:6px;height:6px;background:rgba(255,0,0,0.1);border:1px solid rgba(255,0,0,0.4);">
+              <div style="height:100%;width:${(hpRatio * 100).toFixed(1)}%;background:#ff3333;"></div>
+            </div>
+          `;
+          targetLabelEl.innerHTML = `<div style="color:#ff6666">${target.name}</div>${sizeLine}${hpBar}`;
           targetLabelEl.style.display = "block";
         } else {
           targetLabelEl.style.display = "none";

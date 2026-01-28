@@ -88,6 +88,8 @@ export function createSpawnFactory({ scene, world, defaultMaterial, sceneObjects
       isNavigatorTarget: true,
       navigatorType: "circle",
       navigatorName: entry.name,
+      navigatorSize: sizeStr,
+      navigatorSizeBytes: entry.size,
     };
 
     const body = new CANNON.Body({
@@ -151,6 +153,8 @@ export function createSpawnFactory({ scene, world, defaultMaterial, sceneObjects
       isNavigatorTarget: true,
       navigatorType: "diamond",
       navigatorName: entry.name,
+      navigatorSize: sizeStr,
+      navigatorSizeBytes: entry.size,
     };
 
     const body = new CANNON.Body({
@@ -224,6 +228,8 @@ export function createSpawnFactory({ scene, world, defaultMaterial, sceneObjects
       isNavigatorTarget: true,
       navigatorType: "circle",
       navigatorName: disk.name,
+      navigatorSize: sizeLabel,
+      navigatorSizeBytes: disk.total_space,
     };
 
     const body = new CANNON.Body({

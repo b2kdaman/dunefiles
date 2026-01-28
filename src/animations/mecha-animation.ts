@@ -79,7 +79,7 @@ export function loadMechaAnimation(
   loader.setDRACOLoader(dracoLoader);
 
   loader.load(
-    "/src/assets/mecha2.glb",
+    "/src/assets/mesh_blend.glb",
     (gltf) => {
       const mecha = gltf.scene;
 
@@ -109,13 +109,10 @@ export function loadMechaAnimation(
           if (mesh.material) {
             const mat = mesh.material as THREE.MeshStandardMaterial;
             if (mat.color) {
-              mat.color.multiplyScalar(0.3);
-              mat.color.r = Math.max(mat.color.r, 1.0);
-              mat.color.g *= 0.3;
-              mat.color.b *= 0.3;
+              mat.color.setHex(0x660000);
             }
-            mat.emissive = new THREE.Color(0x660000);
-            mat.emissiveIntensity = 0.5;
+            mat.emissive = new THREE.Color(0xff0000);
+            mat.emissiveIntensity = 1.2;
             mat.transparent = true;
             mat.opacity = 0;
             mat.flatShading = true;
@@ -123,18 +120,7 @@ export function loadMechaAnimation(
             mechaMaterials.push(mat);
           }
 
-          // Create red edges
-          if (mesh.geometry) {
-            const edges = createThickEdges(mesh.geometry, 0xff0000, 2, 15);
-            edges.position.copy(mesh.position);
-            edges.rotation.copy(mesh.rotation);
-            edges.scale.copy(mesh.scale);
-            // Start edges invisible too
-            (edges.material as LineMaterial).opacity = 0;
-            (edges.material as LineMaterial).transparent = true;
-            mecha.add(edges);
-            edgeLines.push(edges);
-          }
+          // Edges disabled for this mesh; use material glow instead
         }
       });
 
@@ -145,7 +131,7 @@ export function loadMechaAnimation(
 
       // Calculate where the mecha center will be
       const targetCenter = new THREE.Vector3(0, mechaEndY, 0);
-      const focusPos = new THREE.Vector3(0, mechaEndY, 12);
+      const focusPos = new THREE.Vector3(0, mechaEndY - 1, 12);
 
       // First: Focus camera on where mecha will appear
       focusCameraOnTarget(camera, controls, targetCenter, focusPos, 1000, () => {
@@ -190,6 +176,7 @@ function startBeamAnimation(
   BLOOM_LAYER: number,
   onComplete?: () => void
 ): void {
+  const cinematicBars = createCinematicBars();
   playMechaAppear();
   // Pixel particle system
   const particleSystem = createPixelParticleSystem();
@@ -350,12 +337,56 @@ function startBeamAnimation(
         beamStartTime + totalBeamDuration,
         particleFadeOutDuration,
         BLOOM_LAYER,
-        onComplete
+        cinematicBars,
+        () => {
+          onComplete?.();
+        }
       );
     }
   }
 
   animateBeamAndMecha();
+}
+
+function createCinematicBars() {
+  const overlay = document.createElement("div");
+  overlay.style.cssText = `
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 250;
+  `;
+  const topBar = document.createElement("div");
+  topBar.style.cssText = `
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 12vh;
+    background: rgba(0, 0, 0, 0.9);
+  `;
+  const bottomBar = document.createElement("div");
+  bottomBar.style.cssText = `
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 12vh;
+    background: rgba(0, 0, 0, 0.9);
+  `;
+  overlay.appendChild(topBar);
+  overlay.appendChild(bottomBar);
+  document.body.appendChild(overlay);
+
+  return {
+    fadeOut: () => {
+      overlay.style.transition = "opacity 700ms ease";
+      overlay.style.opacity = "0";
+      setTimeout(() => {
+        overlay.remove();
+      }, 750);
+    },
+  };
 }
 
 /**
@@ -374,6 +405,7 @@ function fadeOutParticles(
   fadeStartTime: number,
   duration: number,
   BLOOM_LAYER: number,
+  cinematicBars: { fadeOut: () => void },
   onComplete?: () => void
 ): void {
   let lastFrameTime = performance.now();
@@ -400,6 +432,7 @@ function fadeOutParticles(
         edgeLines,
         center,
         BLOOM_LAYER,
+        cinematicBars,
         onComplete
       );
     }
@@ -421,10 +454,12 @@ function startOrbitSequence(
   edgeLines: Line2[],
   center: THREE.Vector3,
   BLOOM_LAYER: number,
+  cinematicBars: { fadeOut: () => void },
   onComplete?: () => void
 ): void {
   orbitCamera(camera, controls, center, 12, 1500, () => {
     transitionToCockpit(camera, controls, mecha, mechaMaterials, edgeLines, center, 1500, () => {
+      cinematicBars.fadeOut();
       enterFlightMode(
         scene,
         camera,

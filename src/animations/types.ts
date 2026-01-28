@@ -53,6 +53,7 @@ export type Bullet = {
   mesh: THREE.Mesh;
   velocity: THREE.Vector3;
   life: number;
+  lastPos: THREE.Vector3;
 };
 
 export type FlightState = {
