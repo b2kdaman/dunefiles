@@ -29,6 +29,8 @@ import { isFlightModeActive } from "../animations/flight-mode";
 import {
   initSoundSystem,
   ensureAudio,
+  startIdleMusic,
+  switchToActionMusic,
   playPickup,
   playDrop,
   playNavigateIn,
@@ -115,6 +117,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
 
     // Initialize sound system from animation module
     initSoundSystem();
+    startIdleMusic();
 
     let frameCount = 0;
     let lastFpsUpdate = performance.now();
@@ -410,6 +413,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
     function loadMecha() {
       ensureAudio();
       setShowMechaButton(false);
+      switchToActionMusic(27, 800);
       loadMechaAnimation(
         scene,
         camera,

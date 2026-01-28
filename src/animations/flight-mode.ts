@@ -5,7 +5,7 @@ import type { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js
 import type { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import type { Line2 } from "three/examples/jsm/lines/Line2.js";
 import type { FlightState, Bullet } from "./types";
-import { playShoot, ensureAudio } from "./sound-effects";
+import { playShoot, ensureAudio, startIdleMusic } from "./sound-effects";
 import { resetCameraToDefault } from "./camera-animation";
 import { createFlightRadar } from "./flight-radar";
 
@@ -530,6 +530,7 @@ export function enterFlightMode(
   function exitFlightMode() {
     flightState.active = false;
     flightModeActive = false;
+    startIdleMusic();
 
     // Remove cockpit overlay
     const overlay = document.getElementById("cockpit-overlay");

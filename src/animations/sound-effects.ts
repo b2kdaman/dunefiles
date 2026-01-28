@@ -9,6 +9,12 @@ let glitchSynth: Tone.MonoSynth;
 let fmSynth: Tone.FMSynth;
 let audioStarted = false;
 let initialized = false;
+let idleMusic: HTMLAudioElement | null = null;
+let actionMusic: HTMLAudioElement | null = null;
+let pendingMusic: "idle" | "action" | null = null;
+let musicFadeTimer: number | null = null;
+let idleBaseVolume = 0.5;
+let idleDuckedVolume = 0.15;
 
 export function initSoundSystem() {
   if (initialized) return;
@@ -51,6 +57,40 @@ export function initSoundSystem() {
   }).connect(filter);
 
   initialized = true;
+}
+
+function initMusicSystem() {
+  if (idleMusic && actionMusic) return;
+  const idleUrl = new URL("../assets/idle.mp3", import.meta.url).toString();
+  const actionUrl = new URL("../assets/action.mp3", import.meta.url).toString();
+  idleMusic = new Audio(idleUrl);
+  actionMusic = new Audio(actionUrl);
+  idleMusic.loop = true;
+  actionMusic.loop = true;
+  idleMusic.volume = idleBaseVolume;
+  actionMusic.volume = 0.6;
+  idleMusic.preload = "auto";
+  actionMusic.preload = "auto";
+}
+
+function attemptPlay(audio: HTMLAudioElement, type: "idle" | "action") {
+  const playPromise = audio.play();
+  if (playPromise && typeof playPromise.catch === "function") {
+    playPromise.catch(() => {
+      pendingMusic = type;
+      const resume = () => {
+        const pending = pendingMusic;
+        pendingMusic = null;
+        window.removeEventListener("pointerdown", resume);
+        if (pending === "idle") {
+          startIdleMusic();
+        } else if (pending === "action") {
+          playActionMusic(26);
+        }
+      };
+      window.addEventListener("pointerdown", resume, { once: true });
+    });
+  }
 }
 
 export async function ensureAudio() {
@@ -113,6 +153,60 @@ export function playMechaAppear() {
   fmSynth.triggerAttackRelease("G4", 0.12, now + 0.31);
   glitchSynth.triggerAttackRelease("C5", 0.05, now + 0.36);
   subBass.triggerAttackRelease("C1", 0.4, now + 0.4);
+}
+
+export function startIdleMusic() {
+  initMusicSystem();
+  if (!idleMusic || !actionMusic) return;
+  if (musicFadeTimer) {
+    window.clearInterval(musicFadeTimer);
+    musicFadeTimer = null;
+  }
+  actionMusic.pause();
+  if (actionMusic.currentTime > 0) actionMusic.currentTime = 0;
+  idleMusic.volume = idleBaseVolume;
+  attemptPlay(idleMusic, "idle");
+}
+
+export function playActionMusic(startAtSeconds: number = 26) {
+  initMusicSystem();
+  if (!idleMusic || !actionMusic) return;
+  idleMusic.pause();
+  try {
+    actionMusic.currentTime = startAtSeconds;
+  } catch {
+    // ignore if not yet ready
+  }
+  attemptPlay(actionMusic, "action");
+}
+
+export function switchToActionMusic(startAtSeconds: number = 27, fadeMs: number = 800) {
+  initMusicSystem();
+  if (!idleMusic || !actionMusic) return;
+  if (musicFadeTimer) {
+    window.clearInterval(musicFadeTimer);
+    musicFadeTimer = null;
+  }
+  const startVolume = idleMusic.volume;
+  const steps = Math.max(1, Math.floor(fadeMs / 50));
+  let step = 0;
+  musicFadeTimer = window.setInterval(() => {
+    step += 1;
+    const t = step / steps;
+    idleMusic!.volume = startVolume + (idleDuckedVolume - startVolume) * t;
+    if (step >= steps) {
+      window.clearInterval(musicFadeTimer!);
+      musicFadeTimer = null;
+      idleMusic!.volume = idleDuckedVolume;
+    }
+  }, 50);
+
+  try {
+    actionMusic.currentTime = startAtSeconds;
+  } catch {
+    // ignore if not yet ready
+  }
+  attemptPlay(actionMusic, "action");
 }
 
 // Export synths for direct access if needed
