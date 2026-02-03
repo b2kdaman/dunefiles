@@ -1,11 +1,17 @@
-import * as THREE from "three";
 import { invoke } from "@tauri-apps/api/core";
 import { useSceneStore, type FileEntry } from "../../store/sceneStore";
 import { useShallow } from "zustand/react/shallow";
-import type { SceneObject, ExitAnim } from "../../animations/types";
-import { exitCurrentObjects } from "../../animations/exit-animation";
-import { diskMaxScale } from "./sizing";
 import type { DiskInfo } from "./spawn";
+import type { NavigationDeps, NavigationHandlers } from "./types";
+import { createDiskSpawnPlan } from "./diskLayout";
+import { runExitTransition } from "./transitions";
+
+const LOADING_OVERLAY_AUTO_HIDE_MS = 1500;
+const NAVIGATE_IN_SPAWN_DELAY_MS = 200;
+const NAVIGATE_BACK_EXIT_MS = 300;
+const NAVIGATE_BACK_SPAWN_DELAY_MS = 150;
+const RETURN_TO_COMPUTER_EXIT_MS = 300;
+const RETURN_TO_COMPUTER_SPAWN_DELAY_MS = 200;
 
 export function useSceneNavigationState() {
   return useSceneStore(
@@ -15,29 +21,6 @@ export function useSceneNavigationState() {
     }))
   );
 }
-
-type NavigationOptions = {
-  sceneObjects: SceneObject[];
-  exitAnimsRef: { current: ExitAnim[] };
-  spawnEntries: (entries: FileEntry[]) => void;
-  updateWalls: (count: number, maxScale: number) => void;
-  createDisk: (disk: DiskInfo, position: THREE.Vector3, velocity: THREE.Vector3, maxSize: number) => void;
-  camera: THREE.PerspectiveCamera;
-  controls: { target: THREE.Vector3 };
-  showLoading: (autoHideMs?: number) => void;
-  hideLoading: () => void;
-  playSpawn: () => void;
-  playNavigateIn: () => void;
-  playNavigateBack: () => void;
-};
-
-type NavigationHandlers = {
-  loadDirectory: (path: string) => Promise<void>;
-  navigateIntoFolder: (path: string) => Promise<void>;
-  navigateBack: () => void;
-  returnToComputer: () => Promise<void>;
-  loadInitialDisks: () => Promise<void>;
-};
 
 export function createNavigationHandlers({
   sceneObjects,
@@ -52,11 +35,11 @@ export function createNavigationHandlers({
   playSpawn,
   playNavigateIn,
   playNavigateBack,
-}: NavigationOptions): NavigationHandlers {
+}: NavigationDeps): NavigationHandlers {
   const getState = useSceneStore.getState;
 
   async function loadDirectory(path: string) {
-    showLoading(1500);
+    showLoading(LOADING_OVERLAY_AUTO_HIDE_MS);
     try {
       const entries = await invoke<FileEntry[]>("list_directory", { path });
 
@@ -74,12 +57,16 @@ export function createNavigationHandlers({
       }));
 
       getState().navigateTo(path, entries, { cameraPosition, cameraTarget, objectStates });
-      exitCurrentObjects(sceneObjects, exitAnimsRef.current);
-      setTimeout(() => {
-        if (entries.length > 0) playSpawn();
-        spawnEntries(entries);
-        hideLoading();
-      }, 200);
+      runExitTransition({
+        sceneObjects,
+        exitAnimsRef,
+        delayMs: NAVIGATE_IN_SPAWN_DELAY_MS,
+        onComplete: () => {
+          if (entries.length > 0) playSpawn();
+          spawnEntries(entries);
+          hideLoading();
+        },
+      });
     } catch (err) {
       console.error("Failed to load directory:", err);
       hideLoading();
@@ -95,60 +82,48 @@ export function createNavigationHandlers({
     const previous = getState().goBack();
     if (previous) {
       playNavigateBack();
-      exitCurrentObjects(sceneObjects, exitAnimsRef.current, 300);
-      setTimeout(() => {
-        if (previous.entries.length > 0) playSpawn();
-        spawnEntries(previous.entries);
+      runExitTransition({
+        sceneObjects,
+        exitAnimsRef,
+        exitAnimDurationMs: NAVIGATE_BACK_EXIT_MS,
+        delayMs: NAVIGATE_BACK_SPAWN_DELAY_MS,
+        onComplete: () => {
+          if (previous.entries.length > 0) playSpawn();
+          spawnEntries(previous.entries);
 
-        if (previous.cameraPosition) {
-          camera.position.set(previous.cameraPosition.x, previous.cameraPosition.y, previous.cameraPosition.z);
-        }
-        if (previous.cameraTarget) {
-          controls.target.set(previous.cameraTarget.x, previous.cameraTarget.y, previous.cameraTarget.z);
-        }
-      }, 150);
+          if (previous.cameraPosition) {
+            camera.position.set(previous.cameraPosition.x, previous.cameraPosition.y, previous.cameraPosition.z);
+          }
+          if (previous.cameraTarget) {
+            controls.target.set(previous.cameraTarget.x, previous.cameraTarget.y, previous.cameraTarget.z);
+          }
+        },
+      });
     }
   }
 
   async function returnToComputer() {
-    showLoading(1500);
+    showLoading(LOADING_OVERLAY_AUTO_HIDE_MS);
     try {
       const disks = await invoke<DiskInfo[]>("get_disks");
       getState().clearHistory();
-      exitCurrentObjects(sceneObjects, exitAnimsRef.current, 300);
-
-      setTimeout(async () => {
-        if (disks.length > 0) {
-          const count = disks.length;
-          const maxDiskSize = Math.max(...disks.map((d) => d.total_space), 1);
-
-          const maxScale = diskMaxScale(maxDiskSize);
-          updateWalls(count, maxScale);
-
-          const gridSize = Math.ceil(Math.sqrt(count));
-          const spacing = 2.0;
-
-          for (let i = 0; i < count; i++) {
-            const disk = disks[i];
-            const row = Math.floor(i / gridSize);
-            const col = i % gridSize;
-            const offsetX = (gridSize - 1) * spacing / 2;
-            const offsetZ = (gridSize - 1) * spacing / 2;
-
-            const spawnPos = new THREE.Vector3(
-              col * spacing - offsetX + (Math.random() - 0.5) * 0.3,
-              8 + Math.random() * 2,
-              row * spacing - offsetZ + (Math.random() - 0.5) * 0.3
-            );
-
-            const spawnVel = new THREE.Vector3((Math.random() - 0.5) * 0.5, -3, (Math.random() - 0.5) * 0.5);
-
-            createDisk(disk, spawnPos, spawnVel, maxDiskSize);
+      runExitTransition({
+        sceneObjects,
+        exitAnimsRef,
+        exitAnimDurationMs: RETURN_TO_COMPUTER_EXIT_MS,
+        delayMs: RETURN_TO_COMPUTER_SPAWN_DELAY_MS,
+        onComplete: () => {
+          if (disks.length > 0) {
+            const plan = createDiskSpawnPlan(disks);
+            updateWalls(plan.count, plan.maxScale);
+            for (const item of plan.items) {
+              createDisk(item.disk, item.position, item.velocity, plan.maxDiskSize);
+            }
+            getState().navigateTo("", []);
           }
-          getState().navigateTo("", []);
-        }
-        hideLoading();
-      }, 200);
+          hideLoading();
+        },
+      });
     } catch (err) {
       console.error("Failed to load disks:", err);
       hideLoading();
@@ -164,31 +139,10 @@ export function createNavigationHandlers({
         await loadDirectory(disks[0].path);
       } else if (disks.length > 0) {
         playSpawn();
-        const count = disks.length;
-        const maxDiskSize = Math.max(...disks.map((d) => d.total_space), 1);
-        const maxScale = diskMaxScale(maxDiskSize);
-
-        updateWalls(count, maxScale);
-
-        const gridSize = Math.ceil(Math.sqrt(count));
-        const spacing = 2.0;
-
-        for (let i = 0; i < count; i++) {
-          const disk = disks[i];
-          const row = Math.floor(i / gridSize);
-          const col = i % gridSize;
-          const offsetX = (gridSize - 1) * spacing / 2;
-          const offsetZ = (gridSize - 1) * spacing / 2;
-
-          const spawnPos = new THREE.Vector3(
-            col * spacing - offsetX + (Math.random() - 0.5) * 0.3,
-            8 + Math.random() * 2,
-            row * spacing - offsetZ + (Math.random() - 0.5) * 0.3
-          );
-
-          const spawnVel = new THREE.Vector3((Math.random() - 0.5) * 0.5, -3, (Math.random() - 0.5) * 0.5);
-
-          createDisk(disk, spawnPos, spawnVel, maxDiskSize);
+        const plan = createDiskSpawnPlan(disks);
+        updateWalls(plan.count, plan.maxScale);
+        for (const item of plan.items) {
+          createDisk(item.disk, item.position, item.velocity, plan.maxDiskSize);
         }
         getState().navigateTo("", []);
       }
