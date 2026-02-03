@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import * as Tone from "tone";
 
 interface SplashScreenProps {
   onComplete: () => void;
@@ -10,34 +9,6 @@ export default function SplashScreen({ onComplete }: SplashScreenProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
-    // Play Tron-like tune
-    const playTune = async () => {
-      await Tone.start();
-
-      const synth = new Tone.MonoSynth({
-        oscillator: { type: "square" },
-        envelope: { attack: 0.005, decay: 0.3, sustain: 0.4, release: 0.8 },
-        filterEnvelope: { attack: 0.005, decay: 0.2, sustain: 0.5, release: 0.8, baseFrequency: 800, octaves: 3 },
-      }).toDestination();
-
-      const reverb = new Tone.Reverb({ decay: 2, wet: 0.5 }).toDestination();
-      synth.connect(reverb);
-
-      const now = Tone.now();
-      // Tron-like arpeggio
-      synth.triggerAttackRelease("C3", "8n", now);
-      synth.triggerAttackRelease("E3", "8n", now + 0.15);
-      synth.triggerAttackRelease("G3", "8n", now + 0.3);
-      synth.triggerAttackRelease("C4", "4n", now + 0.45);
-
-      setTimeout(() => {
-        synth.dispose();
-        reverb.dispose();
-      }, 2000);
-    };
-
-    playTune();
-
     // Draw text on canvas with pixelation
     const canvas = canvasRef.current;
     if (!canvas) return;
