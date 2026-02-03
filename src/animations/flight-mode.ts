@@ -604,6 +604,12 @@ export function enterFlightMode(
 
   // Flight update loop
   let lastFlightTime = performance.now();
+  const upAxis = new THREE.Vector3();
+  const rightAxis = new THREE.Vector3();
+  const forwardAxis = new THREE.Vector3();
+  const orientation = new THREE.Quaternion();
+  const deltaQuat = new THREE.Quaternion();
+  const tempEuler = new THREE.Euler(0, 0, 0, "YXZ");
 
   // Set camera rotation order for proper FPS controls
   camera.rotation.order = "YXZ";
@@ -625,13 +631,35 @@ export function enterFlightMode(
     const maxSpeed = 0.05;
     const speedAccel = 0.025; // speed units per second
 
-    // Accumulate rotation based on cursor offset and time
-    flightState.yaw -= flightState.cursorX * rotationSpeed * deltaSeconds;
-    flightState.pitch -= flightState.cursorY * rotationSpeed * deltaSeconds;
-    const rollDir = (flightState.keys.q ? 1 : 0) - (flightState.keys.e ? 1 : 0);
-    flightState.roll += rollDir * rollSpeed * deltaSeconds;
+    // Accumulate rotation based on cursor offset and time using local axes.
+    const yawDelta = -flightState.cursorX * rotationSpeed * deltaSeconds;
+    const pitchDelta = -flightState.cursorY * rotationSpeed * deltaSeconds;
+    const rollDir = (flightState.keys.e ? 1 : 0) - (flightState.keys.q ? 1 : 0);
+    const rollDelta = rollDir * rollSpeed * deltaSeconds;
 
-    camera.rotation.set(flightState.pitch, flightState.yaw, flightState.roll, "YXZ");
+    orientation.copy(camera.quaternion);
+    if (yawDelta !== 0) {
+      upAxis.set(0, 1, 0).applyQuaternion(orientation).normalize();
+      deltaQuat.setFromAxisAngle(upAxis, yawDelta);
+      orientation.premultiply(deltaQuat);
+    }
+    if (pitchDelta !== 0) {
+      rightAxis.set(1, 0, 0).applyQuaternion(orientation).normalize();
+      deltaQuat.setFromAxisAngle(rightAxis, pitchDelta);
+      orientation.premultiply(deltaQuat);
+    }
+    if (rollDelta !== 0) {
+      forwardAxis.set(0, 0, -1).applyQuaternion(orientation).normalize();
+      deltaQuat.setFromAxisAngle(forwardAxis, rollDelta);
+      orientation.premultiply(deltaQuat);
+    }
+
+    camera.quaternion.copy(orientation);
+    tempEuler.setFromQuaternion(camera.quaternion, "YXZ");
+    flightState.rotation.copy(tempEuler);
+    flightState.pitch = tempEuler.x;
+    flightState.yaw = tempEuler.y;
+    flightState.roll = tempEuler.z;
 
     // Calculate movement direction based on camera orientation
     const forward = new THREE.Vector3(0, 0, -1);
@@ -657,9 +685,6 @@ export function enterFlightMode(
     camera.position.copy(flightState.position);
     flightGround.position.x = flightState.position.x;
     flightGround.position.z = flightState.position.z;
-
-    // Store rotation for shooting direction
-    flightState.rotation.set(flightState.pitch, flightState.yaw, flightState.roll, "YXZ");
 
     // Update bullets
     updateBullets(delta);

@@ -20,6 +20,7 @@ type RetroSceneOverlaysProps = {
   onLoadDirectory: (path: string) => void;
   onLoadMecha: () => void;
   showMechaButton: boolean;
+  showControls: boolean;
 };
 
 export default function RetroSceneOverlays({
@@ -32,6 +33,7 @@ export default function RetroSceneOverlays({
   onLoadDirectory,
   onLoadMecha,
   showMechaButton,
+  showControls,
 }: RetroSceneOverlaysProps) {
   const minSide = Math.min(windowSize.width, windowSize.height);
   const padY = Math.max(8, minSide / 100);
@@ -75,6 +77,59 @@ export default function RetroSceneOverlays({
     cursor: "pointer",
     zIndex: 100,
     letterSpacing: "1px",
+  };
+
+  const controlsPanelStyle: CSSProperties = {
+    position: "absolute",
+    bottom: Math.max(24, padY * 3),
+    right: 12,
+    background: "#000000",
+    border: "2px solid #ff0000",
+    padding: `${Math.max(8, padY)}px ${Math.max(10, padX * 0.6)}px`,
+    font: `${Math.max(12, fontSize * 0.85)}px 'VCR OSD Mono', ui-monospace, monospace`,
+    color: "#ff6666",
+    zIndex: 100,
+    letterSpacing: "1px",
+    textTransform: "uppercase",
+    boxShadow: "0 0 18px rgba(0, 0, 0, 0.6)",
+  };
+
+  const controlsTitleStyle: CSSProperties = {
+    marginBottom: Math.max(6, gap),
+    color: "#ff3333",
+    fontSize: `${Math.max(12, fontSize * 0.9)}px`,
+    letterSpacing: "2px",
+  };
+
+  const controlsListStyle: CSSProperties = {
+    display: "grid",
+    gap: `${Math.max(6, gap * 0.6)}px`,
+  };
+
+  const keyRowStyle: CSSProperties = {
+    display: "flex",
+    alignItems: "center",
+    gap: `${Math.max(6, gap * 0.7)}px`,
+    flexWrap: "wrap",
+  };
+
+  const keyStyle: CSSProperties = {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    minWidth: Math.max(22, fontSize * 1.4),
+    height: Math.max(22, fontSize * 1.4),
+    padding: "2px 6px",
+    border: "2px solid #ff0000",
+    color: "#ff6666",
+    background: "rgba(255, 0, 0, 0.08)",
+    boxShadow: "inset 0 0 6px rgba(255, 0, 0, 0.35)",
+    font: `${Math.max(12, fontSize * 0.85)}px 'VCR OSD Mono', ui-monospace, monospace`,
+    letterSpacing: "1px",
+  };
+
+  const keyLabelStyle: CSSProperties = {
+    color: "#ff6666",
   };
 
   const bigButtonSize = Math.max(80, minSide / 8);
@@ -162,6 +217,37 @@ export default function RetroSceneOverlays({
         >
           ← Back
         </button>
+      )}
+
+      {showControls && (
+        <div style={controlsPanelStyle}>
+          <div style={controlsTitleStyle}>Controls</div>
+          <div style={controlsListStyle}>
+            <div style={keyRowStyle}>
+              <span style={keyStyle}>W</span>
+              <span style={keyStyle}>S</span>
+              <span style={keyLabelStyle}>Speed</span>
+            </div>
+            <div style={keyRowStyle}>
+              <span style={keyStyle}>A</span>
+              <span style={keyStyle}>D</span>
+              <span style={keyLabelStyle}>Strafe</span>
+            </div>
+            <div style={keyRowStyle}>
+              <span style={keyStyle}>Q</span>
+              <span style={keyStyle}>E</span>
+              <span style={keyLabelStyle}>Roll</span>
+            </div>
+            <div style={keyRowStyle}>
+              <span style={keyStyle}>Mouse</span>
+              <span style={keyLabelStyle}>Aim</span>
+            </div>
+            <div style={keyRowStyle}>
+              <span style={keyStyle}>ESC</span>
+              <span style={keyLabelStyle}>Exit</span>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Big X Button - Only show when in folders, not at computer/disks level */}

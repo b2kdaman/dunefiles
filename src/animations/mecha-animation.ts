@@ -61,7 +61,9 @@ export function loadMechaAnimation(
   controls: OrbitControls,
   renderer: THREE.WebGLRenderer,
   BLOOM_LAYER: number,
-  onComplete?: () => void
+  onComplete?: () => void,
+  onCinematicStart?: () => void,
+  onCinematicEnd?: () => void
 ): void {
   const loader = new GLTFLoader();
 
@@ -139,7 +141,9 @@ export function loadMechaAnimation(
           mechaStartY,
           mechaEndY,
           BLOOM_LAYER,
-          onComplete
+          onComplete,
+          onCinematicStart,
+          onCinematicEnd
         );
       });
     },
@@ -166,9 +170,12 @@ function startBeamAnimation(
   mechaStartY: number,
   mechaEndY: number,
   BLOOM_LAYER: number,
-  onComplete?: () => void
+  onComplete?: () => void,
+  onCinematicStart?: () => void,
+  onCinematicEnd?: () => void
 ): void {
-  const cinematicBars = createCinematicBars();
+  const cinematicBars = createCinematicBars(onCinematicEnd);
+  onCinematicStart?.();
   playMechaAppear();
   // Pixel particle system
   const particleSystem = createPixelParticleSystem();
@@ -340,7 +347,7 @@ function startBeamAnimation(
   animateBeamAndMecha();
 }
 
-function createCinematicBars() {
+function createCinematicBars(onFadeOutComplete?: () => void) {
   const overlay = document.createElement("div");
   overlay.style.cssText = `
     position: fixed;
@@ -376,6 +383,7 @@ function createCinematicBars() {
       overlay.style.opacity = "0";
       setTimeout(() => {
         overlay.remove();
+        onFadeOutComplete?.();
       }, 750);
     },
   };
