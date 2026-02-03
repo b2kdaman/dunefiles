@@ -6,7 +6,8 @@ import RetroSceneOverlays from "./retroScene/Overlays";
 import { useSceneNavigationState } from "./retroScene/navigation";
 import { createSceneRuntime } from "./retroScene/runtime";
 import type { SceneRuntime } from "./retroScene/types";
-import { isFlightModeActive } from "../animations/flight-mode";
+import { useRetroSceneViewModel } from "./retroScene/useRetroSceneViewModel";
+import { isFlightModeActive, subscribeFlightMode } from "../animations/flight-mode";
 
 interface RetroSceneProps {
   settings: Settings;
@@ -22,6 +23,11 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
   const [windowSize, setWindowSize] = useState({ width: window.innerWidth, height: window.innerHeight });
   const [showMechaButton, setShowMechaButton] = useState(true);
   const [isFlightMode, setIsFlightMode] = useState(() => isFlightModeActive());
+  const { breadcrumbs, handleBack, navigateToComputer, loadDirectory, loadMecha } = useRetroSceneViewModel({
+    canGoBack,
+    currentPath,
+    runtimeRef,
+  });
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -53,47 +59,8 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
   }, [settings]);
 
   useEffect(() => {
-    let last = isFlightModeActive();
-    const interval = window.setInterval(() => {
-      const next = isFlightModeActive();
-      if (next !== last) {
-        last = next;
-        setIsFlightMode(next);
-      }
-    }, 200);
-    return () => window.clearInterval(interval);
+    return subscribeFlightMode(setIsFlightMode);
   }, []);
-
-  const handleBack = () => {
-    if (runtimeRef.current && canGoBack) {
-      runtimeRef.current.navigateBack();
-    }
-  };
-
-  // Parse breadcrumbs from currentPath
-  const getBreadcrumbs = () => {
-    const breadcrumbs = [{ name: "Computer", path: "" }]; // Always start with Computer
-
-    if (currentPath) {
-      const parts = currentPath.split(/[/\\]/).filter(Boolean);
-      let accumulated = "";
-      for (let i = 0; i < parts.length; i++) {
-        accumulated += (accumulated ? "/" : "") + parts[i];
-        breadcrumbs.push({ name: parts[i], path: accumulated });
-      }
-    }
-
-    return breadcrumbs;
-  };
-
-  const breadcrumbs = getBreadcrumbs();
-
-  // Navigate to Computer view (disks) - without sound
-  const navigateToComputer = async () => {
-    if (runtimeRef.current) {
-      await runtimeRef.current.returnToComputer();
-    }
-  };
 
   return (
     <>
@@ -105,8 +72,8 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
         currentPath={currentPath}
         onNavigateBack={handleBack}
         onNavigateToComputer={navigateToComputer}
-        onLoadDirectory={(path) => runtimeRef.current?.loadDirectory(path)}
-        onLoadMecha={() => runtimeRef.current?.loadMecha()}
+        onLoadDirectory={loadDirectory}
+        onLoadMecha={loadMecha}
         showMechaButton={showMechaButton}
         showControls={isFlightMode}
       />

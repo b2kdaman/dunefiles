@@ -54,7 +54,7 @@ export {
 } from "./camera-animation";
 
 // Flight mode
-export { enterFlightMode } from "./flight-mode";
+export { enterFlightMode, isFlightModeActive, subscribeFlightMode } from "./flight-mode";
 
 // Mecha animation
 export { loadMechaAnimation } from "./mecha-animation";

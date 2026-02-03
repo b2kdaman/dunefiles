@@ -11,9 +11,25 @@ import { createFlightRadar, type RadarTarget } from "./flight-radar";
 import cockpitOverlaySvg from "../assets/cockpit-overlay.svg";
 
 let flightModeActive = false;
+const flightModeListeners = new Set<(active: boolean) => void>();
 
 export function isFlightModeActive(): boolean {
   return flightModeActive;
+}
+
+export function subscribeFlightMode(listener: (active: boolean) => void): () => void {
+  flightModeListeners.add(listener);
+  return () => {
+    flightModeListeners.delete(listener);
+  };
+}
+
+function setFlightModeActive(active: boolean) {
+  if (flightModeActive === active) return;
+  flightModeActive = active;
+  for (const listener of flightModeListeners) {
+    listener(active);
+  }
 }
 
 function createStarField() {
@@ -279,7 +295,7 @@ export function enterFlightMode(
   onExit: () => void
 ): void {
   const DAMAGE_PER_HIT = 150;
-  flightModeActive = true;
+  setFlightModeActive(true);
   // Create and add cockpit overlay
   const cockpitOverlay = createCockpitOverlay();
   document.body.appendChild(cockpitOverlay);
@@ -545,7 +561,7 @@ export function enterFlightMode(
 
   function exitFlightMode() {
     flightState.active = false;
-    flightModeActive = false;
+    setFlightModeActive(false);
     startIdleMusic();
 
     // Remove cockpit overlay
