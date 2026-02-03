@@ -8,6 +8,7 @@ import type { FlightState, Bullet } from "./types";
 import { playShoot, ensureAudio, startIdleMusic } from "./sound-effects";
 import { resetCameraToDefault } from "./camera-animation";
 import { createFlightRadar, type RadarTarget } from "./flight-radar";
+import cockpitOverlaySvg from "../assets/cockpit-overlay.svg";
 
 let flightModeActive = false;
 
@@ -109,6 +110,19 @@ function createCockpitOverlay(): HTMLDivElement {
     width: 40px;
     background: linear-gradient(to left, rgba(20, 0, 0, 0.8), transparent);
     border-left: 2px solid #ff000066;
+  `;
+
+  const frameSvg = document.createElement("img");
+  frameSvg.src = cockpitOverlaySvg;
+  frameSvg.style.cssText = `
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: fill;
+    mix-blend-mode: screen;
+    opacity: 0.86;
+    pointer-events: none;
   `;
 
   // Crosshair
@@ -218,6 +232,7 @@ function createCockpitOverlay(): HTMLDivElement {
   cockpitOverlay.appendChild(frameBottom);
   cockpitOverlay.appendChild(frameLeft);
   cockpitOverlay.appendChild(frameRight);
+  cockpitOverlay.appendChild(frameSvg);
   cockpitOverlay.appendChild(crosshairOuter);
   cockpitOverlay.appendChild(crosshair);
   cockpitOverlay.appendChild(hudText);
