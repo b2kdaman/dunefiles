@@ -67,7 +67,7 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
   const [windowSize, setWindowSize] = useState({ width: window.innerWidth, height: window.innerHeight });
   const loadMechaRef = useRef<(() => void) | null>(null);
   const [showMechaButton, setShowMechaButton] = useState(true);
-  const [isFlightMode, setIsFlightMode] = useState(false);
+  const [isFlightMode, setIsFlightMode] = useState(() => isFlightModeActive());
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -272,7 +272,6 @@ export default function RetroScene({ settings, onRendererReady }: RetroSceneProp
 
   useEffect(() => {
     let last = isFlightModeActive();
-    setIsFlightMode(last);
     const interval = window.setInterval(() => {
       const next = isFlightModeActive();
       if (next !== last) {
