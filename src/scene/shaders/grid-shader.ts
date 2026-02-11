@@ -1,8 +1,11 @@
 import * as THREE from "three";
+import { getCurrentThemePalette } from "../../theme";
+
+const palette = getCurrentThemePalette();
 
 export const InfiniteGridShader = {
   uniforms: {
-    gridColor: { value: new THREE.Color(0xff0000) },
+    gridColor: { value: new THREE.Color(palette.primaryHex) },
     gridSize: { value: 1.5 },
     fadeDistance: { value: 25.0 },
     opacity: { value: 0.4 },

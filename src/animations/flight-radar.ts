@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import type { FlightState } from "./types";
+import { getCurrentThemePalette, hexToCss, rgbaFromHex } from "../theme";
 
 export type RadarTarget = {
   mesh: THREE.Mesh;
@@ -13,6 +14,10 @@ type FlightRadar = {
 };
 
 export function createFlightRadar(targets: RadarTarget[]): FlightRadar {
+  const palette = getCurrentThemePalette();
+  const primaryColor = hexToCss(palette.primaryHex);
+  const dimColor = hexToCss(palette.dimHex);
+  const accentColor = hexToCss(palette.accentHex);
   const navigator = document.createElement("div");
   navigator.style.cssText = `
     position: absolute;
@@ -20,9 +25,9 @@ export function createFlightRadar(targets: RadarTarget[]): FlightRadar {
     right: 64px;
     width: 140px;
     height: 140px;
-    border: 2px solid #ff0000;
-    background: radial-gradient(circle, rgba(80, 0, 0, 0.55) 0%, rgba(10, 0, 0, 0.6) 70%);
-    box-shadow: 0 0 16px rgba(255, 0, 0, 0.3);
+    border: 2px solid ${primaryColor};
+    background: radial-gradient(circle, ${rgbaFromHex(palette.deepBackgroundHex, 0.7)} 0%, ${rgbaFromHex(palette.backgroundHex, 0.6)} 70%);
+    box-shadow: 0 0 16px ${rgbaFromHex(palette.primaryHex, 0.3)};
     border-radius: 12px;
     pointer-events: none;
   `;
@@ -34,7 +39,7 @@ export function createFlightRadar(targets: RadarTarget[]): FlightRadar {
     top: 50%;
     width: 6px;
     height: 6px;
-    background: #ff4444;
+    background: ${dimColor};
     border-radius: 50%;
     transform: translate(-50%, -50%);
   `;
@@ -48,9 +53,9 @@ export function createFlightRadar(targets: RadarTarget[]): FlightRadar {
     left: 50%;
     transform: translateX(-50%);
     font: 11px 'VCR OSD Mono', ui-monospace, monospace;
-    color: #ff6666;
+    color: ${accentColor};
     letter-spacing: 1px;
-    text-shadow: 0 0 6px rgba(255, 0, 0, 0.4);
+    text-shadow: 0 0 6px ${rgbaFromHex(palette.primaryHex, 0.4)};
   `;
   navigator.appendChild(navigatorText);
 
@@ -61,7 +66,7 @@ export function createFlightRadar(targets: RadarTarget[]): FlightRadar {
         position: absolute;
         width: 8px;
         height: 8px;
-        background: rgba(255, 110, 110, 0.85);
+        background: ${rgbaFromHex(palette.softHex, 0.85)};
         transform: translate(-50%, -50%) rotate(45deg);
       `;
     } else {
@@ -69,7 +74,7 @@ export function createFlightRadar(targets: RadarTarget[]): FlightRadar {
         position: absolute;
         width: 8px;
         height: 8px;
-        background: rgba(255, 80, 80, 0.85);
+        background: ${rgbaFromHex(palette.accentHex, 0.85)};
         border-radius: 50%;
         transform: translate(-50%, -50%);
       `;

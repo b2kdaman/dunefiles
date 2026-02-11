@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { getCurrentThemePalette } from "../../theme";
 
 export const DitherPixelShader = {
   uniforms: {
@@ -57,9 +58,10 @@ export const DitherPixelShader = {
 };
 
 export function createFogShader() {
+  const palette = getCurrentThemePalette();
   return {
     uniforms: {
-      fogColor: { value: new THREE.Color(0x3a0808) },
+      fogColor: { value: new THREE.Color(palette.fogHex) },
       time: { value: 0 },
       layerHeight: { value: 0.0 },
     },
@@ -136,8 +138,8 @@ export function createFogShader() {
         // Combine all factors
         float alpha = smokeDensity * distFactor * heightGradient;
 
-        // Red glow with gradient
-        vec3 glowColor = mix(fogColor, vec3(0.5, 0.08, 0.08), heightGradient * 0.6);
+        // Theme glow with vertical brightness variation
+        vec3 glowColor = mix(fogColor * 0.7, fogColor * 1.35, heightGradient * 0.6);
 
         gl_FragColor = vec4(glowColor, alpha * 0.6);
       }
@@ -146,9 +148,10 @@ export function createFogShader() {
 }
 
 export function createInfiniteGridShader() {
+  const palette = getCurrentThemePalette();
   return {
     uniforms: {
-      gridColor: { value: new THREE.Color(0xff0000) },
+      gridColor: { value: new THREE.Color(palette.primaryHex) },
       gridSize: { value: 1.5 },
       fadeDistance: { value: 25.0 },
       opacity: { value: 0.4 },

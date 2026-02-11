@@ -13,6 +13,8 @@ let idleMusic: HTMLAudioElement | null = null;
 let actionMusic: HTMLAudioElement | null = null;
 let pendingMusic: "idle" | "action" | null = null;
 let musicFadeTimer: number | null = null;
+let soundEnabled = true;
+let musicEnabled = true;
 const idleBaseVolume = 0.5;
 const idleDuckedVolume = 0.15;
 
@@ -100,62 +102,103 @@ export async function ensureAudio() {
   }
 }
 
+function runSynthAction(action: () => void) {
+  if (!soundEnabled) return;
+  try {
+    if (!initialized) {
+      initSoundSystem();
+    }
+    ensureAudio().catch(() => {
+      // Ignore user-gesture/audio-context failures and keep app running.
+    });
+    action();
+  } catch (err) {
+    console.warn("Sound effect skipped:", err);
+  }
+}
+
+export function setSoundEnabled(enabled: boolean) {
+  soundEnabled = enabled;
+}
+
+export function setMusicEnabled(enabled: boolean) {
+  musicEnabled = enabled;
+  initMusicSystem();
+  if (!idleMusic || !actionMusic) return;
+  if (!musicEnabled) {
+    idleMusic.pause();
+    actionMusic.pause();
+    pendingMusic = null;
+    return;
+  }
+  startIdleMusic();
+}
+
 export function playPickup() {
-  ensureAudio();
-  bassSynth.triggerAttackRelease("C2", 0.15);
-  glitchSynth.triggerAttackRelease("G4", 0.08, Tone.now() + 0.02);
+  runSynthAction(() => {
+    bassSynth.triggerAttackRelease("C2", 0.15);
+    glitchSynth.triggerAttackRelease("G4", 0.08, Tone.now() + 0.02);
+  });
 }
 
 export function playDrop() {
-  ensureAudio();
-  subBass.triggerAttackRelease("E1", 0.25);
-  glitchSynth.triggerAttackRelease("C3", 0.1);
+  runSynthAction(() => {
+    subBass.triggerAttackRelease("E1", 0.25);
+    glitchSynth.triggerAttackRelease("C3", 0.1);
+  });
 }
 
 export function playNavigateIn() {
-  ensureAudio();
-  fmSynth.triggerAttackRelease("C2", 0.2, Tone.now());
-  fmSynth.triggerAttackRelease("G2", 0.15, Tone.now() + 0.1);
-  glitchSynth.triggerAttackRelease("C4", 0.1, Tone.now() + 0.15);
+  runSynthAction(() => {
+    fmSynth.triggerAttackRelease("C2", 0.2, Tone.now());
+    fmSynth.triggerAttackRelease("G2", 0.15, Tone.now() + 0.1);
+    glitchSynth.triggerAttackRelease("C4", 0.1, Tone.now() + 0.15);
+  });
 }
 
 export function playNavigateBack() {
-  ensureAudio();
-  fmSynth.triggerAttackRelease("G2", 0.15, Tone.now());
-  fmSynth.triggerAttackRelease("C2", 0.2, Tone.now() + 0.1);
-  subBass.triggerAttackRelease("C1", 0.3, Tone.now() + 0.05);
+  runSynthAction(() => {
+    fmSynth.triggerAttackRelease("G2", 0.15, Tone.now());
+    fmSynth.triggerAttackRelease("C2", 0.2, Tone.now() + 0.1);
+    subBass.triggerAttackRelease("C1", 0.3, Tone.now() + 0.05);
+  });
 }
 
 export function playSpawn() {
-  ensureAudio();
-  bassSynth.triggerAttackRelease("G1", 0.1);
-  glitchSynth.triggerAttackRelease("E5", 0.05, Tone.now() + 0.02);
+  runSynthAction(() => {
+    bassSynth.triggerAttackRelease("G1", 0.1);
+    glitchSynth.triggerAttackRelease("E5", 0.05, Tone.now() + 0.02);
+  });
 }
 
 export function playLand() {
-  ensureAudio();
-  subBass.triggerAttackRelease("C1", 0.15);
+  runSynthAction(() => {
+    subBass.triggerAttackRelease("C1", 0.15);
+  });
 }
 
 export function playShoot() {
-  ensureAudio();
-  glitchSynth.triggerAttackRelease("C5", 0.05);
-  bassSynth.triggerAttackRelease("C2", 0.1);
+  runSynthAction(() => {
+    glitchSynth.triggerAttackRelease("C5", 0.05);
+    bassSynth.triggerAttackRelease("C2", 0.1);
+  });
 }
 
 export function playMechaAppear() {
-  ensureAudio();
-  const now = Tone.now();
-  bassSynth.triggerAttackRelease("C2", 0.25, now);
-  bassSynth.triggerAttackRelease("G1", 0.25, now + 0.25);
-  fmSynth.triggerAttackRelease("C4", 0.12, now + 0.05);
-  fmSynth.triggerAttackRelease("E4", 0.12, now + 0.18);
-  fmSynth.triggerAttackRelease("G4", 0.12, now + 0.31);
-  glitchSynth.triggerAttackRelease("C5", 0.05, now + 0.36);
-  subBass.triggerAttackRelease("C1", 0.4, now + 0.4);
+  runSynthAction(() => {
+    const now = Tone.now();
+    bassSynth.triggerAttackRelease("C2", 0.25, now);
+    bassSynth.triggerAttackRelease("G1", 0.25, now + 0.25);
+    fmSynth.triggerAttackRelease("C4", 0.12, now + 0.05);
+    fmSynth.triggerAttackRelease("E4", 0.12, now + 0.18);
+    fmSynth.triggerAttackRelease("G4", 0.12, now + 0.31);
+    glitchSynth.triggerAttackRelease("C5", 0.05, now + 0.36);
+    subBass.triggerAttackRelease("C1", 0.4, now + 0.4);
+  });
 }
 
 export function startIdleMusic() {
+  if (!musicEnabled) return;
   initMusicSystem();
   if (!idleMusic || !actionMusic) return;
   if (musicFadeTimer) {
@@ -169,6 +212,7 @@ export function startIdleMusic() {
 }
 
 export function playActionMusic(startAtSeconds: number = 26) {
+  if (!musicEnabled) return;
   initMusicSystem();
   if (!idleMusic || !actionMusic) return;
   idleMusic.pause();
@@ -181,6 +225,7 @@ export function playActionMusic(startAtSeconds: number = 26) {
 }
 
 export function switchToActionMusic(startAtSeconds: number = 27, fadeMs: number = 800) {
+  if (!musicEnabled) return;
   initMusicSystem();
   if (!idleMusic || !actionMusic) return;
   if (musicFadeTimer) {

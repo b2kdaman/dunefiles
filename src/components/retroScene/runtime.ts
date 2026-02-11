@@ -27,6 +27,7 @@ import {
   playSpawn,
   playLand,
 } from "../../animations/sound-effects";
+import { getCurrentThemePalette } from "../../theme";
 
 let objectIdCounter = 0;
 
@@ -40,6 +41,7 @@ export function createSceneRuntime({
   onWindowSizeChange,
   onShowMechaButtonChange,
 }: SceneDeps): SceneRuntime {
+  const palette = getCurrentThemePalette();
   const mutableState: SceneMutableState = {
     exitAnimsRef: { current: [] },
     scaleAnimsRef: { current: [] },
@@ -77,8 +79,8 @@ export function createSceneRuntime({
   initSoundSystem();
   startIdleMusic();
 
-  scene.fog = new THREE.FogExp2(0x050101, 0.065);
-  scene.background = new THREE.Color(0x050101);
+  scene.fog = new THREE.FogExp2(palette.backgroundHex, 0.065);
+  scene.background = new THREE.Color(palette.backgroundHex);
 
   const groundY = -1.2;
   const { world, defaultMaterial } = createPhysicsWorld({

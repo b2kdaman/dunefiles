@@ -8,6 +8,7 @@ import { formatSize } from "./format";
 import { createThickEdges } from "./geometry";
 import { diskSizeToScale, sizeToScale } from "./sizing";
 import { DIAMOND_RADIUS, SPHERE_RADIUS } from "./constants";
+import { getCurrentThemePalette } from "../../theme";
 
 type SpawnFactoryDeps = {
   scene: THREE.Scene;
@@ -34,6 +35,9 @@ type SpawnFactory = {
 };
 
 export function createSpawnFactory({ scene, world, defaultMaterial, sceneObjects, generateId }: SpawnFactoryDeps): SpawnFactory {
+  const palette = getCurrentThemePalette();
+  const folderColor = new THREE.Color(palette.meshBaseHex).lerp(new THREE.Color(palette.accentHex), 0.45).getHex();
+  const fileColor = new THREE.Color(palette.meshBaseHex).lerp(new THREE.Color(palette.softHex), 0.55).getHex();
   // Invisible walls (dynamic sizing)
   let wallBodies: CANNON.Body[] = [];
   const wallHeight = 10;
@@ -79,7 +83,13 @@ export function createSpawnFactory({ scene, world, defaultMaterial, sceneObjects
     const geo = new THREE.SphereGeometry(SPHERE_RADIUS, 24, 16);
     const mesh = new THREE.Mesh(
       geo,
-      new THREE.MeshStandardMaterial({ color: 0x442a2a, roughness: 0.65, metalness: 0.15 })
+      new THREE.MeshStandardMaterial({
+        color: folderColor,
+        roughness: 0.62,
+        metalness: 0.2,
+        emissive: palette.meshEmissiveHex,
+        emissiveIntensity: 0.28,
+      })
     );
     mesh.castShadow = true;
     mesh.scale.set(scale, scale, scale);
@@ -104,7 +114,7 @@ export function createSpawnFactory({ scene, world, defaultMaterial, sceneObjects
     body.angularFactor.set(0, 1, 0);
     mesh.userData = { ...mesh.userData, physicsBody: body };
 
-    const edges = createThickEdges(geo, 0xff0000, scale > 0.6 ? 4 : 3, 1);
+    const edges = createThickEdges(geo, palette.primaryHex, scale > 0.6 ? 4 : 3, 1);
     edges.scale.set(scale, scale, scale);
 
     mesh.add(createLabel(entry.name, sizeStr, scale, SPHERE_RADIUS));
@@ -121,8 +131,8 @@ export function createSpawnFactory({ scene, world, defaultMaterial, sceneObjects
       type: "sphere",
       scale,
       originalScale: new THREE.Vector3(scale, scale, scale),
-      originalEmissive: 0x000000,
-      originalEmissiveIntensity: 0,
+      originalEmissive: palette.meshEmissiveHex,
+      originalEmissiveIntensity: 0.28,
       filePath: entry.path,
       fileName: entry.name,
       fileSize: sizeStr,
@@ -139,11 +149,11 @@ export function createSpawnFactory({ scene, world, defaultMaterial, sceneObjects
     const mesh = new THREE.Mesh(
       geo,
       new THREE.MeshStandardMaterial({
-        color: 0x4a2020,
+        color: fileColor,
         roughness: 0.35,
-        metalness: 0.25,
-        emissive: 0x200505,
-        emissiveIntensity: 0.35,
+        metalness: 0.3,
+        emissive: palette.meshEmissiveHex,
+        emissiveIntensity: 0.42,
       })
     );
     const sizeStr = formatSize(entry.size);
@@ -170,7 +180,7 @@ export function createSpawnFactory({ scene, world, defaultMaterial, sceneObjects
     body.angularFactor.set(0, 1, 0);
     mesh.userData = { ...mesh.userData, physicsBody: body };
 
-    const edges = createThickEdges(geo, 0xff0000, 3, 1);
+    const edges = createThickEdges(geo, palette.primaryHex, 3, 1);
     edges.scale.set(0.7 * scale, 1 * scale, 0.7 * scale);
 
     mesh.add(createLabel(entry.name, sizeStr, scale, DIAMOND_RADIUS));
@@ -187,8 +197,8 @@ export function createSpawnFactory({ scene, world, defaultMaterial, sceneObjects
       type: "diamond",
       scale,
       originalScale: new THREE.Vector3(0.7 * scale, 1 * scale, 0.7 * scale),
-      originalEmissive: 0x200505,
-      originalEmissiveIntensity: 0.35,
+      originalEmissive: palette.meshEmissiveHex,
+      originalEmissiveIntensity: 0.42,
       filePath: entry.path,
       fileName: entry.name,
       fileSize: sizeStr,
@@ -209,15 +219,15 @@ export function createSpawnFactory({ scene, world, defaultMaterial, sceneObjects
     // Calculate how full the disk is (for color)
     const usedSpace = disk.total_space - disk.available_space;
     const percentUsed = disk.total_space > 0 ? usedSpace / disk.total_space : 0;
-    const colorValue = Math.floor(0x3a + (0xff - 0x3a) * percentUsed);
+    const diskColor = new THREE.Color(palette.meshBaseHex).lerp(new THREE.Color(palette.primaryHex), percentUsed);
 
     const mesh = new THREE.Mesh(
       geo,
       new THREE.MeshStandardMaterial({
-        color: (colorValue << 16) | (colorValue << 8) | 0x4a,
+        color: diskColor.getHex(),
         roughness: 0.5,
         metalness: 0.3,
-        emissive: 0x101020,
+        emissive: palette.meshEmissiveHex,
         emissiveIntensity: 0.2,
       })
     );
@@ -258,7 +268,7 @@ export function createSpawnFactory({ scene, world, defaultMaterial, sceneObjects
     body.angularFactor.set(0, 1, 0);
     mesh.userData = { ...mesh.userData, physicsBody: body };
 
-    const edges = createThickEdges(geo, 0xff0000, Math.max(3, scale * 4), 1);
+    const edges = createThickEdges(geo, palette.primaryHex, Math.max(3, scale * 4), 1);
     edges.scale.set(scale, scale, scale);
 
     // Debug: Log raw disk info
@@ -280,7 +290,7 @@ export function createSpawnFactory({ scene, world, defaultMaterial, sceneObjects
       type: "sphere", // Treat as navigable like folders
       scale,
       originalScale: new THREE.Vector3(scale, scale, scale),
-      originalEmissive: 0x101020,
+      originalEmissive: palette.meshEmissiveHex,
       originalEmissiveIntensity: 0.2,
       filePath: disk.path,
       fileName: disk.name,

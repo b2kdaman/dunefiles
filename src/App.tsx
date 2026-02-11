@@ -2,8 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import RetroScene from "./components/RetroScene";
 import SplashScreen from "./components/SplashScreen";
+import MainMenu from "./components/MainMenu";
 // import ControlPanel from "./components/ControlPanel";
 import { DEFAULT_SETTINGS, type Settings } from "./types";
+import { setMusicEnabled as applyMusicEnabled, setSoundEnabled as applySoundEnabled } from "./animations/sound-effects";
+import { setCurrentTheme, type ThemeName } from "./theme";
 import "./App.css";
 
 // Check if running in Tauri
@@ -18,6 +21,11 @@ async function invokeCommand<T>(cmd: string, args?: Record<string, unknown>): Pr
 function App() {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [showSplash, setShowSplash] = useState(true);
+  const [showMenu, setShowMenu] = useState(true);
+  const [showOptions, setShowOptions] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [musicEnabled, setMusicEnabled] = useState(true);
+  const [theme, setTheme] = useState<ThemeName>("red");
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
 
   useEffect(() => {
@@ -27,6 +35,18 @@ function App() {
         .catch(console.error);
     }
   }, []);
+
+  useEffect(() => {
+    applySoundEnabled(soundEnabled);
+  }, [soundEnabled]);
+
+  useEffect(() => {
+    applyMusicEnabled(musicEnabled);
+  }, [musicEnabled]);
+
+  useEffect(() => {
+    setCurrentTheme(theme);
+  }, [theme]);
 
   /* const handleSave = useCallback(async () => {
     if (!isTauri) return;
@@ -75,10 +95,40 @@ function App() {
     rendererRef.current = renderer;
   }, []);
 
+  const handleExit = useCallback(async () => {
+    if (isTauri) {
+      try {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        await getCurrentWindow().close();
+        return;
+      } catch (err) {
+        console.error("Failed to close Tauri window:", err);
+      }
+    }
+    window.close();
+  }, []);
+
   return (
-    <div className="app">
+    <div className={`app theme-${theme}`}>
       {showSplash && <SplashScreen onComplete={() => setShowSplash(false)} />}
-      <RetroScene settings={settings} onRendererReady={handleRendererReady} />
+      <RetroScene key={theme} settings={settings} onRendererReady={handleRendererReady} />
+      <MainMenu
+        isOpen={!showSplash && showMenu}
+        showOptions={showOptions}
+        soundEnabled={soundEnabled}
+        musicEnabled={musicEnabled}
+        theme={theme}
+        onStart={() => {
+          setShowMenu(false);
+          setShowOptions(false);
+        }}
+        onOpenOptions={() => setShowOptions(true)}
+        onCloseOptions={() => setShowOptions(false)}
+        onExit={handleExit}
+        onSoundChange={setSoundEnabled}
+        onMusicChange={setMusicEnabled}
+        onThemeChange={setTheme}
+      />
 {/* <ControlPanel
         settings={settings}
         onChange={setSettings}
@@ -87,7 +137,7 @@ function App() {
         onReset={handleReset}
         onScreenshot={handleScreenshot}
       /> */}
-      <div className="hint">Drag to orbit. Wheel to zoom.</div>
+      {!showMenu && <div className="hint">Drag to orbit. Wheel to zoom.</div>}
     </div>
   );
 }

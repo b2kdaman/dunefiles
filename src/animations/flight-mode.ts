@@ -9,6 +9,7 @@ import { playShoot, ensureAudio, startIdleMusic } from "./sound-effects";
 import { resetCameraToDefault } from "./camera-animation";
 import { createFlightRadar, type RadarTarget } from "./flight-radar";
 import cockpitOverlaySvg from "../assets/cockpit-overlay.svg";
+import { getCurrentThemePalette, hexToCss, rgbaFromHex } from "../theme";
 
 let flightModeActive = false;
 const flightModeListeners = new Set<(active: boolean) => void>();
@@ -33,6 +34,7 @@ function setFlightModeActive(active: boolean) {
 }
 
 function createStarField() {
+  const palette = getCurrentThemePalette();
   const starCount = 100;
   const radius = 400;
   const positions = new Float32Array(starCount * 3);
@@ -54,7 +56,7 @@ function createStarField() {
   geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
 
   const material = new THREE.PointsMaterial({
-    color: 0xff3333,
+    color: palette.dimHex,
     size: 1.2,
     sizeAttenuation: true,
     transparent: true,
@@ -68,6 +70,9 @@ function createStarField() {
  * Create the cockpit HUD overlay with all UI elements.
  */
 function createCockpitOverlay(): HTMLDivElement {
+  const palette = getCurrentThemePalette();
+  const primaryColor = hexToCss(palette.primaryHex);
+  const accentColor = hexToCss(palette.accentHex);
   const cockpitOverlay = document.createElement("div");
   cockpitOverlay.id = "cockpit-overlay";
   cockpitOverlay.style.cssText = `
@@ -88,8 +93,8 @@ function createCockpitOverlay(): HTMLDivElement {
     left: 0;
     right: 0;
     height: 60px;
-    background: linear-gradient(to bottom, rgba(20, 0, 0, 0.9), transparent);
-    border-bottom: 3px solid #ff0000;
+    background: linear-gradient(to bottom, ${rgbaFromHex(palette.deepBackgroundHex, 0.9)}, transparent);
+    border-bottom: 3px solid ${primaryColor};
   `;
 
   // Cockpit frame - bottom
@@ -100,8 +105,8 @@ function createCockpitOverlay(): HTMLDivElement {
     left: 0;
     right: 0;
     height: 80px;
-    background: linear-gradient(to top, rgba(20, 0, 0, 0.95), transparent);
-    border-top: 3px solid #ff0000;
+    background: linear-gradient(to top, ${rgbaFromHex(palette.deepBackgroundHex, 0.95)}, transparent);
+    border-top: 3px solid ${primaryColor};
   `;
 
   // Cockpit frame - left
@@ -112,8 +117,8 @@ function createCockpitOverlay(): HTMLDivElement {
     left: 0;
     bottom: 80px;
     width: 40px;
-    background: linear-gradient(to right, rgba(20, 0, 0, 0.8), transparent);
-    border-right: 2px solid #ff000066;
+    background: linear-gradient(to right, ${rgbaFromHex(palette.deepBackgroundHex, 0.8)}, transparent);
+    border-right: 2px solid ${rgbaFromHex(palette.primaryHex, 0.4)};
   `;
 
   // Cockpit frame - right
@@ -124,8 +129,8 @@ function createCockpitOverlay(): HTMLDivElement {
     right: 0;
     bottom: 80px;
     width: 40px;
-    background: linear-gradient(to left, rgba(20, 0, 0, 0.8), transparent);
-    border-left: 2px solid #ff000066;
+    background: linear-gradient(to left, ${rgbaFromHex(palette.deepBackgroundHex, 0.8)}, transparent);
+    border-left: 2px solid ${rgbaFromHex(palette.primaryHex, 0.4)};
   `;
 
   const frameSvg = document.createElement("img");
@@ -150,7 +155,7 @@ function createCockpitOverlay(): HTMLDivElement {
     transform: translate(-50%, -50%);
     width: 40px;
     height: 40px;
-    border: 2px solid #ff0000;
+    border: 2px solid ${primaryColor};
     border-radius: 50%;
     opacity: 0.7;
   `;
@@ -162,7 +167,7 @@ function createCockpitOverlay(): HTMLDivElement {
     transform: translate(-50%, -50%);
     width: 4px;
     height: 4px;
-    background: #ff0000;
+    background: ${primaryColor};
     border-radius: 50%;
   `;
   crosshair.appendChild(crosshairDot);
@@ -175,9 +180,9 @@ function createCockpitOverlay(): HTMLDivElement {
     transform: translate(-50%, -50%);
     width: 180px;
     height: 180px;
-    border: 2px solid rgba(255, 0, 0, 0.45);
+    border: 2px solid ${rgbaFromHex(palette.primaryHex, 0.45)};
     border-radius: 50%;
-    box-shadow: 0 0 16px rgba(255, 0, 0, 0.2);
+    box-shadow: 0 0 16px ${rgbaFromHex(palette.primaryHex, 0.2)};
     pointer-events: none;
   `;
 
@@ -189,9 +194,9 @@ function createCockpitOverlay(): HTMLDivElement {
     top: 50%;
     transform: translateY(-50%);
     font: 12px 'VCR OSD Mono', ui-monospace, monospace;
-    color: #ff6666;
+    color: ${accentColor};
     letter-spacing: 1px;
-    text-shadow: 0 0 6px rgba(255, 0, 0, 0.4);
+    text-shadow: 0 0 6px ${rgbaFromHex(palette.primaryHex, 0.4)};
     text-align: left;
   `;
 
@@ -203,12 +208,12 @@ function createCockpitOverlay(): HTMLDivElement {
     left: 50%;
     transform: translateX(-50%);
     font: 16px 'VCR OSD Mono', ui-monospace, monospace;
-    color: #ff0000;
+    color: ${primaryColor};
     text-align: center;
     letter-spacing: 2px;
   `;
   hudText.innerHTML =
-    "FLIGHT MODE<br><span style='font-size: 12px; color: #ff6666;'>W/S: Speed | A/D: Strafe | Q/E: Roll | Mouse: Aim | Click: Fire | ESC: Exit</span>";
+    `FLIGHT MODE<br><span style='font-size: 12px; color: ${accentColor};'>W/S: Speed | A/D: Strafe | Q/E: Roll | Mouse: Aim | Click: Fire | ESC: Exit</span>`;
 
   const targetLabel = document.createElement("div");
   targetLabel.id = "flight-target-label";
@@ -218,12 +223,12 @@ function createCockpitOverlay(): HTMLDivElement {
     left: 50%;
     transform: translateX(-50%);
     background: rgba(0, 0, 0, 0.7);
-    border: 3px solid #ff0000;
+    border: 3px solid ${primaryColor};
     padding: 8px 24px;
     font: 16px 'VCR OSD Mono', ui-monospace, monospace;
     color: #ffffff;
     letter-spacing: 1.5px;
-    text-shadow: 0 0 8px rgba(255, 0, 0, 0.3);
+    text-shadow: 0 0 8px ${rgbaFromHex(palette.primaryHex, 0.3)};
     text-align: center;
     min-width: 220px;
     display: none;
@@ -237,8 +242,8 @@ function createCockpitOverlay(): HTMLDivElement {
     position: fixed;
     width: 20px;
     height: 20px;
-    border: 3px solid #ff0000;
-    background: rgba(255, 0, 0, 0.3);
+    border: 3px solid ${primaryColor};
+    background: ${rgbaFromHex(palette.primaryHex, 0.3)};
     pointer-events: none;
     z-index: 10000;
     transform: translate(-50%, -50%);
@@ -294,6 +299,9 @@ export function enterFlightMode(
   BLOOM_LAYER: number,
   onExit: () => void
 ): void {
+  const palette = getCurrentThemePalette();
+  const primaryColor = hexToCss(palette.primaryHex);
+  const accentColor = hexToCss(palette.accentHex);
   const DAMAGE_PER_HIT = 150;
   setFlightModeActive(true);
   // Create and add cockpit overlay
@@ -315,7 +323,7 @@ export function enterFlightMode(
 
   const flightGroundGeometry = new THREE.PlaneGeometry(2000, 2000, 1, 1);
   const flightGroundMaterial = new THREE.MeshStandardMaterial({
-    color: 0x140808,
+    color: palette.deepBackgroundHex,
     roughness: 1.0,
     metalness: 0.0,
   });
@@ -351,7 +359,7 @@ export function enterFlightMode(
   const farBeamDistance = 35;
   const farBeamGeometry = new THREE.CylinderGeometry(0.25, 0.25, farBeamHeight, 8, 1, true);
   const farBeamMaterial = new THREE.MeshBasicMaterial({
-    color: 0xff0000,
+    color: palette.primaryHex,
     transparent: true,
     opacity: 0.35,
     depthWrite: false,
@@ -395,8 +403,8 @@ export function enterFlightMode(
     forward.applyQuaternion(camera.quaternion);
 
     const mat = new THREE.MeshStandardMaterial({
-      color: 0xff2222,
-      emissive: 0xff0000,
+      color: palette.primaryHex,
+      emissive: palette.primaryHex,
       emissiveIntensity: 2.5,
       transparent: true,
       opacity: 1,
@@ -443,7 +451,7 @@ export function enterFlightMode(
         if (hitMat && hitMat.emissive) {
           const prevEmissive = hitMat.emissive.getHex();
           const prevIntensity = hitMat.emissiveIntensity ?? 0;
-          hitMat.emissive.setHex(0xff0000);
+          hitMat.emissive.setHex(palette.primaryHex);
           hitMat.emissiveIntensity = 2.0;
           setTimeout(() => {
             hitMat.emissive.setHex(prevEmissive);
@@ -756,11 +764,11 @@ export function enterFlightMode(
           const sizeLine = target.size ? `<div style="color:#888">${target.size}</div>` : "";
           const hpRatio = maxHp > 0 ? Math.max(0, Math.min(1, currentHp / maxHp)) : 0;
           const hpBar = `
-            <div style="margin-top:6px;height:6px;background:rgba(255,0,0,0.1);border:1px solid rgba(255,0,0,0.4);">
-              <div style="height:100%;width:${(hpRatio * 100).toFixed(1)}%;background:#ff3333;"></div>
+            <div style="margin-top:6px;height:6px;background:${rgbaFromHex(palette.primaryHex, 0.1)};border:1px solid ${rgbaFromHex(palette.primaryHex, 0.4)};">
+              <div style="height:100%;width:${(hpRatio * 100).toFixed(1)}%;background:${primaryColor};"></div>
             </div>
           `;
-          targetLabelEl.innerHTML = `<div style="color:#ff6666">${target.name}</div>${sizeLine}${hpBar}`;
+          targetLabelEl.innerHTML = `<div style="color:${accentColor}">${target.name}</div>${sizeLine}${hpBar}`;
           targetLabelEl.style.display = "block";
         } else {
           targetLabelEl.style.display = "none";

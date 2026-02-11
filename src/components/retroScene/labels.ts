@@ -1,8 +1,12 @@
 import { CSS2DObject } from "three/examples/jsm/renderers/CSS2DRenderer.js";
 import type { SceneObject } from "../../animations/types";
 import { MAX_SCALE, MIN_SCALE } from "./constants";
+import { getCurrentThemePalette, hexToCss } from "../../theme";
 
 export function createLabel(name: string, size: string, scale: number, objectHeight: number = 1.1): CSS2DObject {
+  const palette = getCurrentThemePalette();
+  const primaryColor = hexToCss(palette.primaryHex);
+  const accentColor = hexToCss(palette.accentHex);
   // Trim long names
   const maxLen = 16;
   const displayName = name.length > maxLen ? name.slice(0, maxLen - 1) + "…" : name;
@@ -17,7 +21,7 @@ export function createLabel(name: string, size: string, scale: number, objectHei
   const div = document.createElement("div");
   div.style.cssText = `
     background: rgba(0, 0, 0, 0.7);
-    border: 3px solid #ff0000;
+    border: 3px solid ${primaryColor};
     padding: ${padding}px ${padding * 2}px;
     font: ${fontSize}px 'VCR OSD Mono', ui-monospace, monospace;
     color: #ffffff;
@@ -33,7 +37,7 @@ export function createLabel(name: string, size: string, scale: number, objectHei
   `;
 
   const nameDiv = document.createElement("div");
-  nameDiv.style.color = "#ff6666";
+  nameDiv.style.color = accentColor;
   nameDiv.textContent = displayName;
   div.appendChild(nameDiv);
 

@@ -6,6 +6,7 @@ import { MIN_DISK_SCALE, MAX_DISK_SCALE } from "../constants";
 import { generateId } from "../utils";
 import { createThickEdges } from "./edges";
 import { createLabel } from "./labels";
+import { getCurrentThemePalette } from "../../theme";
 
 export type DiskCreatorDeps = {
   scene: THREE.Scene;
@@ -22,6 +23,7 @@ export function createDisk(
   maxSize: number
 ): SceneObject {
   const { scene, world, sceneObjects, defaultMaterial } = deps;
+  const palette = getCurrentThemePalette();
 
   const scale = maxSize > 0
     ? MIN_DISK_SCALE + (MAX_DISK_SCALE - MIN_DISK_SCALE) * Math.sqrt(disk.total_space / maxSize)
@@ -32,15 +34,15 @@ export function createDisk(
 
   const usedSpace = disk.total_space - disk.available_space;
   const percentUsed = disk.total_space > 0 ? usedSpace / disk.total_space : 0;
-  const colorValue = Math.floor(0x3a + (0xff - 0x3a) * percentUsed);
+  const diskColor = new THREE.Color(palette.meshBaseHex).lerp(new THREE.Color(palette.primaryHex), percentUsed);
 
   const mesh = new THREE.Mesh(
     geo,
     new THREE.MeshStandardMaterial({
-      color: (colorValue << 16) | (colorValue << 8) | 0x4a,
+      color: diskColor.getHex(),
       roughness: 0.5,
       metalness: 0.3,
-      emissive: 0x101020,
+      emissive: palette.meshEmissiveHex,
       emissiveIntensity: 0.2,
     })
   );
@@ -58,7 +60,7 @@ export function createDisk(
   body.velocity.set(velocity.x, velocity.y, velocity.z);
   body.angularFactor.set(0, 1, 0);
 
-  const edges = createThickEdges(geo, 0xff0000, Math.max(3, scale * 4), 1);
+  const edges = createThickEdges(geo, palette.primaryHex, Math.max(3, scale * 4), 1);
   edges.scale.set(scale, scale, scale);
 
   console.log(`Raw disk data for ${disk.name}:`, disk);
@@ -91,7 +93,7 @@ export function createDisk(
     type: "sphere",
     scale,
     originalScale: new THREE.Vector3(scale, scale, scale),
-    originalEmissive: 0x101020,
+    originalEmissive: palette.meshEmissiveHex,
     originalEmissiveIntensity: 0.2,
     filePath: disk.path,
     fileName: disk.name,

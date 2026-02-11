@@ -1,17 +1,167 @@
 .app {
+  --theme-primary: #ff2f2f;
+  --theme-accent: #ff8e8e;
+  --theme-soft: #ffb3b3;
+  --theme-dim: #ff6666;
+  --theme-glow: rgba(255, 47, 47, 0.45);
+  --panel-bg: rgba(8, 2, 2, 0.82);
+  --border: rgba(255, 96, 96, 0.45);
   position: relative;
   width: 100vw;
   height: 100vh;
   overflow: hidden;
+  background:
+    radial-gradient(circle at 20% 15%, rgba(255, 80, 80, 0.12), transparent 35%),
+    radial-gradient(circle at 85% 82%, rgba(255, 60, 60, 0.1), transparent 30%),
+    #000;
+}
+
+.app.theme-green {
+  --theme-primary: #4cff63;
+  --theme-accent: #afffb8;
+  --theme-soft: #d3ffd9;
+  --theme-dim: #7dff90;
+  --theme-glow: rgba(76, 255, 99, 0.45);
+  --panel-bg: rgba(2, 8, 3, 0.82);
+  --border: rgba(106, 255, 123, 0.45);
+}
+
+.app.theme-neon-blue {
+  --theme-primary: #12d7ff;
+  --theme-accent: #8bf4ff;
+  --theme-soft: #c9fbff;
+  --theme-dim: #56e9ff;
+  --theme-glow: rgba(18, 215, 255, 0.45);
+  --panel-bg: rgba(1, 6, 10, 0.84);
+  --border: rgba(86, 236, 255, 0.45);
+}
+
+.main-menu-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 5000;
+  display: grid;
+  place-items: center;
+  background: rgba(2, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+}
+
+.main-menu-panel {
+  width: min(92vw, 460px);
+  border: 1px solid var(--border);
+  box-shadow: 0 0 32px var(--theme-glow);
+  background: linear-gradient(170deg, var(--panel-bg), rgba(0, 0, 0, 0.86));
+  padding: 24px 20px;
+  border-radius: 10px;
+  color: var(--theme-primary);
+  font: 18px/1.2 "VCR OSD Mono", ui-monospace, monospace;
+  text-transform: uppercase;
+}
+
+.main-menu-panel h1 {
+  margin: 0 0 22px;
+  letter-spacing: 0.11em;
+  font-size: clamp(1.5rem, 3.2vw, 2rem);
+  text-shadow: 0 0 14px var(--theme-glow);
+}
+
+.menu-actions {
+  display: grid;
+  gap: 12px;
+}
+
+.menu-actions button,
+.menu-toggle-group button,
+.menu-back {
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.4);
+  color: var(--theme-accent);
+  font: inherit;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.2s, box-shadow 0.2s, color 0.2s;
+}
+
+.menu-actions button,
+.menu-back {
+  padding: 11px 10px;
+}
+
+.menu-actions button:hover,
+.menu-toggle-group button:hover,
+.menu-back:hover {
+  background: rgba(0, 0, 0, 0.64);
+  color: var(--theme-primary);
+  box-shadow: inset 0 0 12px var(--theme-glow);
+}
+
+.menu-options {
+  display: grid;
+  gap: 12px;
+}
+
+.menu-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 12px;
+  color: var(--theme-accent);
+  font-size: 0.86rem;
+}
+
+.menu-toggle-group {
+  display: flex;
+  gap: 8px;
+}
+
+.menu-toggle-group button {
+  min-width: 72px;
+  padding: 7px 10px;
+  font-size: 0.76rem;
+}
+
+.menu-theme-group button {
+  min-width: 90px;
+}
+
+.menu-toggle-group .is-active {
+  color: #000;
+  background: var(--theme-primary);
+  box-shadow: 0 0 18px var(--theme-glow);
+}
+
+.menu-back {
+  margin-top: 6px;
 }
 
 .hint {
   position: fixed;
   left: 12px;
   bottom: 12px;
-  font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
-  color: rgba(255, 255, 255, 0.65);
+  font: 12px/1.4 "VCR OSD Mono", ui-monospace, monospace;
+  color: var(--theme-accent);
+  text-shadow: 0 0 8px var(--theme-glow);
   user-select: none;
   pointer-events: none;
+}
+
+@media (max-width: 640px) {
+  .main-menu-panel {
+    padding: 18px 14px;
+  }
+
+  .menu-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .menu-toggle-group {
+    justify-content: space-between;
+  }
+
+  .menu-toggle-group button {
+    min-width: unset;
+    flex: 1;
+  }
 }

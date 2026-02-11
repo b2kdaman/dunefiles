@@ -3,6 +3,7 @@ import * as CANNON from "cannon-es";
 import type { SceneObject } from "../../animations/types";
 import { spawnClickParticles } from "../../animations/particles";
 import { startScaleAnim } from "../../animations/scale-animation";
+import { getCurrentThemePalette } from "../../theme";
 
 type InteractionOptions = {
   rendererDom: HTMLCanvasElement;
@@ -48,6 +49,7 @@ export function registerInteractionHandlers({
   onBloomStart,
   onBloomEnd,
 }: InteractionOptions) {
+  const palette = getCurrentThemePalette();
   const raycaster = new THREE.Raycaster();
   const mouse = new THREE.Vector2();
   const dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
@@ -83,7 +85,7 @@ export function registerInteractionHandlers({
         startScaleAnim(scaleAnims as ScaleAnimArray, hitObj, bigScale, 400);
 
         const mat = hitObj.mesh.material as THREE.MeshStandardMaterial;
-        mat.emissive.setHex(0xff0000);
+        mat.emissive.setHex(palette.primaryHex);
         mat.emissiveIntensity = 3.5;
         hitObj.mesh.layers.enable(BLOOM_LAYER);
         hitObj.edges.layers.enable(BLOOM_LAYER);

@@ -6,6 +6,7 @@ import { SPHERE_RADIUS } from "../constants";
 import { generateId, formatSize, sizeToScale } from "../utils";
 import { createThickEdges } from "./edges";
 import { createLabel } from "./labels";
+import { getCurrentThemePalette } from "../../theme";
 
 export type FolderCreatorDeps = {
   scene: THREE.Scene;
@@ -22,12 +23,20 @@ export function createFolder(
   maxSize: number
 ): SceneObject {
   const { scene, world, sceneObjects, defaultMaterial } = deps;
+  const palette = getCurrentThemePalette();
+  const folderColor = new THREE.Color(palette.meshBaseHex).lerp(new THREE.Color(palette.accentHex), 0.45).getHex();
   const scale = sizeToScale(entry.size, maxSize);
   const sizeStr = formatSize(entry.size);
   const geo = new THREE.SphereGeometry(SPHERE_RADIUS, 24, 16);
   const mesh = new THREE.Mesh(
     geo,
-    new THREE.MeshStandardMaterial({ color: 0x442a2a, roughness: 0.65, metalness: 0.15 })
+    new THREE.MeshStandardMaterial({
+      color: folderColor,
+      roughness: 0.62,
+      metalness: 0.2,
+      emissive: palette.meshEmissiveHex,
+      emissiveIntensity: 0.28,
+    })
   );
   mesh.castShadow = true;
   mesh.scale.set(scale, scale, scale);
@@ -43,7 +52,7 @@ export function createFolder(
   body.velocity.set(velocity.x, velocity.y, velocity.z);
   body.angularFactor.set(0, 1, 0);
 
-  const edges = createThickEdges(geo, 0xff0000, scale > 0.6 ? 4 : 3, 1);
+  const edges = createThickEdges(geo, palette.primaryHex, scale > 0.6 ? 4 : 3, 1);
   edges.scale.set(scale, scale, scale);
 
   mesh.add(createLabel(entry.name, sizeStr, scale, SPHERE_RADIUS));
@@ -60,8 +69,8 @@ export function createFolder(
     type: "sphere",
     scale,
     originalScale: new THREE.Vector3(scale, scale, scale),
-    originalEmissive: 0x000000,
-    originalEmissiveIntensity: 0,
+    originalEmissive: palette.meshEmissiveHex,
+    originalEmissiveIntensity: 0.28,
     filePath: entry.path,
     fileName: entry.name,
     fileSize: sizeStr,

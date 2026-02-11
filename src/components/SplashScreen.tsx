@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { getCurrentThemePalette, hexToCss } from "../theme";
 
 interface SplashScreenProps {
   onComplete: () => void;
@@ -18,6 +19,9 @@ export default function SplashScreen({ onComplete }: SplashScreenProps) {
 
     const width = window.innerWidth;
     const height = window.innerHeight;
+    const palette = getCurrentThemePalette();
+    const bgColor = hexToCss(palette.backgroundHex);
+    const primaryColor = hexToCss(palette.primaryHex);
     canvas.width = width;
     canvas.height = height;
 
@@ -35,7 +39,7 @@ export default function SplashScreen({ onComplete }: SplashScreenProps) {
       if (!tempCtx) return;
 
       // Draw background
-      tempCtx.fillStyle = "#050101";
+      tempCtx.fillStyle = bgColor;
       tempCtx.fillRect(0, 0, scaledWidth, scaledHeight);
 
       // Calculate font size for scaled canvas
@@ -43,15 +47,15 @@ export default function SplashScreen({ onComplete }: SplashScreenProps) {
 
       // Draw text on scaled canvas
       tempCtx.font = `${fontSize}px 'VCR OSD Mono', ui-monospace, monospace`;
-      tempCtx.fillStyle = "#ff0000";
+      tempCtx.fillStyle = primaryColor;
       tempCtx.textAlign = "center";
       tempCtx.textBaseline = "middle";
-      tempCtx.shadowColor = "#ff0000";
+      tempCtx.shadowColor = primaryColor;
       tempCtx.shadowBlur = fontSize * 0.1;
       tempCtx.fillText("3d_space", scaledWidth / 2, scaledHeight / 2);
 
       // Clear main canvas
-      ctx.fillStyle = "#050101";
+      ctx.fillStyle = bgColor;
       ctx.fillRect(0, 0, width, height);
 
       // Draw scaled canvas to main canvas with pixelation

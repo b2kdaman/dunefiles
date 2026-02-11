@@ -6,6 +6,7 @@ import { DIAMOND_RADIUS } from "../constants";
 import { generateId, formatSize, sizeToScale } from "../utils";
 import { createThickEdges } from "./edges";
 import { createLabel } from "./labels";
+import { getCurrentThemePalette } from "../../theme";
 
 export type FileCreatorDeps = {
   scene: THREE.Scene;
@@ -22,16 +23,18 @@ export function createFile(
   maxSize: number
 ): SceneObject {
   const { scene, world, sceneObjects, defaultMaterial } = deps;
+  const palette = getCurrentThemePalette();
+  const fileColor = new THREE.Color(palette.meshBaseHex).lerp(new THREE.Color(palette.softHex), 0.55).getHex();
   const scale = sizeToScale(entry.size, maxSize);
   const geo = new THREE.OctahedronGeometry(DIAMOND_RADIUS, 0);
   const mesh = new THREE.Mesh(
     geo,
     new THREE.MeshStandardMaterial({
-      color: 0x4a2020,
+      color: fileColor,
       roughness: 0.35,
       metalness: 0.25,
-      emissive: 0x200505,
-      emissiveIntensity: 0.35,
+      emissive: palette.meshEmissiveHex,
+      emissiveIntensity: 0.42,
     })
   );
   mesh.castShadow = true;
@@ -48,7 +51,7 @@ export function createFile(
   body.velocity.set(velocity.x, velocity.y, velocity.z);
   body.angularFactor.set(0, 1, 0);
 
-  const edges = createThickEdges(geo, 0xff0000, 3, 1);
+  const edges = createThickEdges(geo, palette.primaryHex, 3, 1);
   edges.scale.set(0.7 * scale, 1 * scale, 0.7 * scale);
 
   const sizeStr = formatSize(entry.size);
@@ -66,8 +69,8 @@ export function createFile(
     type: "diamond",
     scale,
     originalScale: new THREE.Vector3(0.7 * scale, 1 * scale, 0.7 * scale),
-    originalEmissive: 0x200505,
-    originalEmissiveIntensity: 0.35,
+    originalEmissive: palette.meshEmissiveHex,
+    originalEmissiveIntensity: 0.42,
     filePath: entry.path,
     fileName: entry.name,
     fileSize: sizeStr,

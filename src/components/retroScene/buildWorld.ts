@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { createFogShader, createInfiniteGridShader } from "./shaders";
+import { getCurrentThemePalette } from "../../theme";
 
 type BuildWorldOptions = {
   scene: THREE.Scene;
@@ -17,9 +18,10 @@ export type WorldVisuals = {
 };
 
 export function buildWorld({ scene, groundY }: BuildWorldOptions): WorldVisuals {
-  scene.add(new THREE.AmbientLight(0xff4444, 0.4));
+  const palette = getCurrentThemePalette();
+  scene.add(new THREE.AmbientLight(palette.dimHex, 0.4));
 
-  const key = new THREE.DirectionalLight(0xff6666, 2.0);
+  const key = new THREE.DirectionalLight(palette.accentHex, 2.0);
   key.position.set(3, 6, 2);
   key.castShadow = true;
   key.shadow.mapSize.width = 1024;
@@ -32,16 +34,16 @@ export function buildWorld({ scene, groundY }: BuildWorldOptions): WorldVisuals 
   key.shadow.camera.bottom = -10;
   scene.add(key);
 
-  const rim = new THREE.DirectionalLight(0xff3333, 0.8);
+  const rim = new THREE.DirectionalLight(palette.primaryHex, 0.8);
   rim.position.set(-5, 2, -6);
   scene.add(rim);
 
-  const pointLight = new THREE.PointLight(0xff2222, 1.5, 20);
+  const pointLight = new THREE.PointLight(palette.primaryHex, 1.5, 20);
   pointLight.position.set(0, 3, 0);
   scene.add(pointLight);
 
   const planeGeometry = new THREE.PlaneGeometry(30, 30, 1, 1);
-  const planeMaterial = new THREE.MeshStandardMaterial({ color: 0x170b0b, roughness: 0.98, metalness: 0.02 });
+  const planeMaterial = new THREE.MeshStandardMaterial({ color: palette.planeHex, roughness: 0.98, metalness: 0.02 });
   const plane = new THREE.Mesh(planeGeometry, planeMaterial);
   plane.rotation.x = -Math.PI / 2;
   plane.position.y = groundY;
@@ -62,7 +64,7 @@ export function buildWorld({ scene, groundY }: BuildWorldOptions): WorldVisuals 
 
     const fogMaterial = new THREE.ShaderMaterial({
       uniforms: {
-        fogColor: { value: new THREE.Color(0x3a0808) },
+        fogColor: { value: new THREE.Color(palette.fogHex) },
         time: { value: 0 },
         layerHeight: { value: layerHeight },
       },

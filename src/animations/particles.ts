@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import type { Particle, PixelParticle } from "./types";
+import { getCurrentThemePalette } from "../theme";
 
 // Click particles system
 export function spawnClickParticles(
@@ -8,11 +9,12 @@ export function spawnClickParticles(
   particles: Particle[],
   count: number = 10
 ) {
+  const palette = getCurrentThemePalette();
   const geometry = new THREE.SphereGeometry(0.08, 8, 8);
 
   for (let i = 0; i < count; i++) {
     const material = new THREE.MeshBasicMaterial({
-      color: 0xff0000,
+      color: palette.primaryHex,
       transparent: true,
       opacity: 1,
     });
@@ -66,12 +68,13 @@ export function updateClickParticles(
 
 // Pixel particle system (for beam animation)
 export function createPixelParticleSystem() {
+  const palette = getCurrentThemePalette();
   const pixelParticles: PixelParticle[] = [];
   const pixelGeometry = new THREE.PlaneGeometry(0.15, 0.15);
 
   function spawnBeamParticle(scene: THREE.Scene) {
     const mat = new THREE.MeshBasicMaterial({
-      color: 0xff0000,
+      color: palette.primaryHex,
       transparent: true,
       opacity: 1,
       side: THREE.DoubleSide,
@@ -105,7 +108,7 @@ export function createPixelParticleSystem() {
 
   function spawnMechaParticle(scene: THREE.Scene, mechaPosition: THREE.Vector3) {
     const mat = new THREE.MeshBasicMaterial({
-      color: Math.random() > 0.3 ? 0xff0000 : 0xff4444,
+      color: Math.random() > 0.3 ? palette.primaryHex : palette.dimHex,
       transparent: true,
       opacity: 1,
       side: THREE.DoubleSide,

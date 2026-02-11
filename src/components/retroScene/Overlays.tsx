@@ -48,10 +48,10 @@ export default function RetroSceneOverlays({
     left: "50%",
     transform: "translateX(-50%)",
     background: "rgba(0, 0, 0, 0.7)",
-    border: "2px solid #ff0000",
+    border: "2px solid var(--theme-primary)",
     padding: `${padY}px ${padX}px`,
     font: `${fontSize}px 'VCR OSD Mono', ui-monospace, monospace`,
-    color: "#ff6666",
+    color: "var(--theme-dim)",
     zIndex: 100,
     display: "flex",
     gap: `${gap}px`,
@@ -70,10 +70,10 @@ export default function RetroSceneOverlays({
     top: 12,
     right: 12,
     background: "rgba(0, 0, 0, 0.7)",
-    border: "2px solid #ff0000",
+    border: "2px solid var(--theme-primary)",
     padding: `${padY}px ${padX}px`,
     font: `${fontSize}px 'VCR OSD Mono', ui-monospace, monospace`,
-    color: "#ff6666",
+    color: "var(--theme-dim)",
     cursor: "pointer",
     zIndex: 100,
     letterSpacing: "1px",
@@ -84,10 +84,10 @@ export default function RetroSceneOverlays({
     bottom: Math.max(24, padY * 3),
     right: 12,
     background: "#000000",
-    border: "2px solid #ff0000",
+    border: "2px solid var(--theme-primary)",
     padding: `${Math.max(8, padY)}px ${Math.max(10, padX * 0.6)}px`,
     font: `${Math.max(12, fontSize * 0.85)}px 'VCR OSD Mono', ui-monospace, monospace`,
-    color: "#ff6666",
+    color: "var(--theme-dim)",
     zIndex: 100,
     letterSpacing: "1px",
     textTransform: "uppercase",
@@ -96,7 +96,7 @@ export default function RetroSceneOverlays({
 
   const controlsTitleStyle: CSSProperties = {
     marginBottom: Math.max(6, gap),
-    color: "#ff3333",
+    color: "var(--theme-primary)",
     fontSize: `${Math.max(12, fontSize * 0.9)}px`,
     letterSpacing: "2px",
   };
@@ -120,16 +120,16 @@ export default function RetroSceneOverlays({
     minWidth: Math.max(22, fontSize * 1.4),
     height: Math.max(22, fontSize * 1.4),
     padding: "2px 6px",
-    border: "2px solid #ff0000",
-    color: "#ff6666",
-    background: "rgba(255, 0, 0, 0.08)",
-    boxShadow: "inset 0 0 6px rgba(255, 0, 0, 0.35)",
+    border: "2px solid var(--theme-primary)",
+    color: "var(--theme-dim)",
+    background: "color-mix(in srgb, var(--theme-primary) 10%, transparent)",
+    boxShadow: "inset 0 0 6px var(--theme-glow)",
     font: `${Math.max(12, fontSize * 0.85)}px 'VCR OSD Mono', ui-monospace, monospace`,
     letterSpacing: "1px",
   };
 
   const keyLabelStyle: CSSProperties = {
-    color: "#ff6666",
+    color: "var(--theme-dim)",
   };
 
   const bigButtonSize = Math.max(80, minSide / 8);
@@ -139,19 +139,19 @@ export default function RetroSceneOverlays({
     left: "50%",
     transform: "translateX(-50%)",
     background: "rgba(0, 0, 0, 0.8)",
-    border: "4px solid #ff0000",
+    border: "4px solid var(--theme-primary)",
     borderRadius: "0",
     width: bigButtonSize,
     height: bigButtonSize,
     font: `bold ${Math.max(48, minSide / 12)}px 'VCR OSD Mono', ui-monospace, monospace`,
-    color: "#ff0000",
+    color: "var(--theme-primary)",
     cursor: "pointer",
     zIndex: 150,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     transition: "none",
-    boxShadow: "0 0 20px rgba(255, 0, 0, 0.5)",
+    boxShadow: "0 0 20px var(--theme-glow)",
     imageRendering: "pixelated",
     letterSpacing: "0",
     textShadow: "2px 2px 0 #000000",
@@ -163,11 +163,11 @@ export default function RetroSceneOverlays({
         <div style={breadcrumbStyle}>
           {breadcrumbs.map((crumb, index) => (
             <span key={index} style={breadcrumbItemStyle}>
-              {index > 0 && <span style={{ color: "#ff4444", fontSize: `${chevronSize}px` }}>›</span>}
+              {index > 0 && <span style={{ color: "var(--theme-primary)", fontSize: `${chevronSize}px` }}>›</span>}
               <span
                 style={{
                   cursor: index < breadcrumbs.length - 1 ? "pointer" : "default",
-                  color: index < breadcrumbs.length - 1 ? "#ff8888" : "#ff6666",
+                  color: index < breadcrumbs.length - 1 ? "var(--theme-soft)" : "var(--theme-dim)",
                   textDecoration: index < breadcrumbs.length - 1 ? "underline" : "none",
                 }}
                 onClick={() => {
@@ -186,7 +186,7 @@ export default function RetroSceneOverlays({
                 }}
                 onMouseLeave={(e) => {
                   if (index < breadcrumbs.length - 1) {
-                    e.currentTarget.style.color = "#ff8888";
+                    e.currentTarget.style.color = "var(--theme-soft)";
                   }
                 }}
               >
@@ -207,12 +207,12 @@ export default function RetroSceneOverlays({
           }}
           style={backButtonStyle}
           onMouseEnter={(e) => {
-            e.currentTarget.style.background = "rgba(255, 0, 0, 0.2)";
+            e.currentTarget.style.background = "color-mix(in srgb, var(--theme-primary) 20%, transparent)";
             e.currentTarget.style.color = "#ffffff";
           }}
           onMouseLeave={(e) => {
             e.currentTarget.style.background = "rgba(0, 0, 0, 0.7)";
-            e.currentTarget.style.color = "#ff6666";
+            e.currentTarget.style.color = "var(--theme-dim)";
           }}
         >
           ← Back
@@ -256,17 +256,17 @@ export default function RetroSceneOverlays({
           onClick={onLoadMecha}
           style={bigButtonStyle}
           onMouseEnter={(e) => {
-            e.currentTarget.style.background = "rgba(255, 0, 0, 0.3)";
+            e.currentTarget.style.background = "color-mix(in srgb, var(--theme-primary) 30%, transparent)";
             e.currentTarget.style.color = "#ffffff";
             e.currentTarget.style.transform = "translateX(-50%)";
-            e.currentTarget.style.boxShadow = "0 0 30px rgba(255, 0, 0, 0.8)";
-            e.currentTarget.style.textShadow = "2px 2px 0 #ff0000";
+            e.currentTarget.style.boxShadow = "0 0 30px var(--theme-glow)";
+            e.currentTarget.style.textShadow = "2px 2px 0 var(--theme-primary)";
           }}
           onMouseLeave={(e) => {
             e.currentTarget.style.background = "rgba(0, 0, 0, 0.8)";
-            e.currentTarget.style.color = "#ff0000";
+            e.currentTarget.style.color = "var(--theme-primary)";
             e.currentTarget.style.transform = "translateX(-50%)";
-            e.currentTarget.style.boxShadow = "0 0 20px rgba(255, 0, 0, 0.5)";
+            e.currentTarget.style.boxShadow = "0 0 20px var(--theme-glow)";
             e.currentTarget.style.textShadow = "2px 2px 0 #000000";
           }}
         >

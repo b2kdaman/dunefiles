@@ -9,11 +9,12 @@ import { createPixelParticleSystem } from "./particles";
 import { focusCameraOnTarget, orbitCamera, transitionToCockpit } from "./camera-animation";
 import { enterFlightMode } from "./flight-mode";
 import { playMechaAppear } from "./sound-effects";
+import { getCurrentThemePalette } from "../theme";
 
 // Beam shader definition
 const beamShader = {
   uniforms: {
-    color: { value: new THREE.Color(0xff0000) },
+    color: { value: new THREE.Color(0xffffff) },
     opacity: { value: 0.0 },
     time: { value: 0 },
   },
@@ -65,6 +66,7 @@ export function loadMechaAnimation(
   onCinematicStart?: () => void,
   onCinematicEnd?: () => void
 ): void {
+  const palette = getCurrentThemePalette();
   const loader = new GLTFLoader();
 
   // Set up Draco loader for compressed geometries
@@ -103,9 +105,9 @@ export function loadMechaAnimation(
           if (mesh.material) {
             const mat = mesh.material as THREE.MeshStandardMaterial;
             if (mat.color) {
-              mat.color.setHex(0x660000);
+              mat.color.setHex(palette.mechaTintHex);
             }
-            mat.emissive = new THREE.Color(0xff0000);
+            mat.emissive = new THREE.Color(palette.primaryHex);
             mat.emissiveIntensity = 1.2;
             mat.transparent = true;
             mat.opacity = 0;
@@ -174,6 +176,7 @@ function startBeamAnimation(
   onCinematicStart?: () => void,
   onCinematicEnd?: () => void
 ): void {
+  const palette = getCurrentThemePalette();
   const cinematicBars = createCinematicBars(onCinematicEnd);
   onCinematicStart?.();
   playMechaAppear();
@@ -187,7 +190,7 @@ function startBeamAnimation(
   const beamGeometry = new THREE.CylinderGeometry(1, 1, beamHeight, 16, 1, true);
   const beamMaterial = new THREE.ShaderMaterial({
     uniforms: {
-      color: { value: new THREE.Color(0xff0000) },
+      color: { value: new THREE.Color(palette.primaryHex) },
       opacity: { value: 0.0 },
       time: { value: 0 },
     },
@@ -207,7 +210,7 @@ function startBeamAnimation(
   // Add inner bright red core beam
   const coreGeometry = new THREE.CylinderGeometry(0.3, 0.3, beamHeight, 8, 1);
   const coreMaterial = new THREE.MeshBasicMaterial({
-    color: 0xff2222,
+    color: palette.primaryHex,
     transparent: true,
     opacity: 0,
     blending: THREE.AdditiveBlending,

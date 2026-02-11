@@ -1,3 +1,5 @@
+import { getCurrentThemePalette, hexToCss, rgbaFromHex } from "../../theme";
+
 type LoadingOverlay = {
   overlay: HTMLDivElement;
   show: () => void;
@@ -6,12 +8,13 @@ type LoadingOverlay = {
 };
 
 export function createFpsCounter(container: HTMLElement): HTMLDivElement {
+  const palette = getCurrentThemePalette();
   const fpsDiv = document.createElement("div");
   fpsDiv.style.cssText = `
     position: absolute;
     top: 12px;
     left: 12px;
-    color: #ff4444;
+    color: ${hexToCss(palette.dimHex)};
     font: 14px 'VCR OSD Mono', ui-monospace, monospace;
     z-index: 100;
     pointer-events: none;
@@ -22,6 +25,7 @@ export function createFpsCounter(container: HTMLElement): HTMLDivElement {
 }
 
 export function createLoadingOverlay(container: HTMLElement): LoadingOverlay {
+  const palette = getCurrentThemePalette();
   const loadingOverlay = document.createElement("div");
   loadingOverlay.style.cssText = `
     position: absolute;
@@ -40,7 +44,7 @@ export function createLoadingOverlay(container: HTMLElement): LoadingOverlay {
     width: 50px;
     height: 50px;
     border: 4px solid #333;
-    border-top: 4px solid #ff4444;
+    border-top: 4px solid ${rgbaFromHex(palette.primaryHex, 0.95)};
     border-radius: 50%;
     animation: spin 1s linear infinite;
   `;
