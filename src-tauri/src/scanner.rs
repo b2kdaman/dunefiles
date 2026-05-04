@@ -1,7 +1,11 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
+use std::time::{Duration, Instant};
 use sysinfo::Disks;
+
+const MAX_DIRECTORY_LIST_SCAN_DURATION: Duration = Duration::from_millis(1_500);
+const MAX_FOLDER_SCAN_DURATION: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiskInfo {
@@ -17,6 +21,7 @@ pub struct FileEntry {
     pub path: String,
     pub is_dir: bool,
     pub size: u64,
+    pub size_complete: bool,
 }
 
 /// Get list of available disks/volumes
@@ -66,29 +71,73 @@ pub fn get_disks() -> Vec<DiskInfo> {
     disk_infos
 }
 
-/// Calculate folder size recursively with depth limit
-fn calculate_folder_size(path: &Path, depth: usize) -> u64 {
-    if depth > 3 {
-        return 0; // Limit recursion depth for performance
+fn is_hidden(path: &Path) -> bool {
+    path.file_name()
+        .map(|name| name.to_string_lossy().starts_with('.'))
+        .unwrap_or(false)
+}
+
+struct FolderSize {
+    bytes: u64,
+    complete: bool,
+}
+
+/// Calculate folder size recursively until the UI responsiveness budget expires.
+fn calculate_folder_size(path: &Path, deadline: Instant) -> FolderSize {
+    let mut size = 0u64;
+    let mut complete = true;
+
+    if Instant::now() >= deadline {
+        return FolderSize {
+            bytes: 0,
+            complete: false,
+        };
     }
 
-    let mut size = 0u64;
-    if let Ok(entries) = fs::read_dir(path) {
-        for entry in entries.flatten() {
+    let entries = match fs::read_dir(path) {
+        Ok(entries) => entries,
+        Err(_) => {
+            return FolderSize {
+                bytes: 0,
+                complete: false,
+            };
+        }
+    };
+
+    for entry in entries.flatten() {
+        if Instant::now() >= deadline {
+            complete = false;
+            break;
+        }
+
+        let entry_path = entry.path();
+
+        if is_hidden(&entry_path) {
+            continue;
+        }
+
+        let Ok(file_type) = entry.file_type() else {
+            complete = false;
+            continue;
+        };
+
+        if file_type.is_file() {
             if let Ok(metadata) = entry.metadata() {
-                if metadata.is_file() {
-                    size += metadata.len();
-                } else if metadata.is_dir() {
-                    // Skip hidden directories
-                    let name = entry.file_name();
-                    if !name.to_string_lossy().starts_with('.') {
-                        size += calculate_folder_size(&entry.path(), depth + 1);
-                    }
-                }
+                size = size.saturating_add(metadata.len());
+            } else {
+                complete = false;
             }
+        } else if file_type.is_dir() {
+            let child_size = calculate_folder_size(&entry_path, deadline);
+            size = size.saturating_add(child_size.bytes);
+            complete &= child_size.complete;
         }
     }
-    size
+
+    FolderSize {
+        bytes: size,
+        complete,
+    }
 }
 
 /// List contents of a directory
@@ -104,33 +153,46 @@ pub fn list_directory(path: &str) -> Result<Vec<FileEntry>, String> {
     }
 
     let mut entries = Vec::new();
+    let list_deadline = Instant::now() + MAX_DIRECTORY_LIST_SCAN_DURATION;
 
     let read_result = fs::read_dir(dir_path).map_err(|e| e.to_string())?;
 
     for entry in read_result.flatten() {
         let entry_path = entry.path();
-        let metadata = match entry.metadata() {
-            Ok(m) => m,
-            Err(_) => continue, // Skip inaccessible items
-        };
-
         let name = entry_path
             .file_name()
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
 
-        // Skip hidden files/folders (starting with .)
-        if name.starts_with('.') {
+        if is_hidden(&entry_path) {
             continue;
         }
 
-        let is_dir = metadata.is_dir();
-        let size = if is_dir {
-            // Calculate recursive folder size (limited depth)
-            calculate_folder_size(&entry_path, 0)
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
+            Err(_) => continue, // Skip inaccessible items
+        };
+
+        let is_dir = file_type.is_dir();
+        let (size, size_complete) = if is_dir {
+            let now = Instant::now();
+            let folder_deadline = now + MAX_FOLDER_SCAN_DURATION;
+            let deadline = if folder_deadline < list_deadline {
+                folder_deadline
+            } else {
+                list_deadline
+            };
+            let folder_size = calculate_folder_size(&entry_path, deadline);
+
+            (folder_size.bytes, folder_size.complete)
+        } else if file_type.is_file() {
+            match entry.metadata() {
+                Ok(metadata) => (metadata.len(), true),
+                Err(_) => continue,
+            }
         } else {
-            metadata.len()
+            continue;
         };
 
         entries.push(FileEntry {
@@ -138,6 +200,7 @@ pub fn list_directory(path: &str) -> Result<Vec<FileEntry>, String> {
             path: entry_path.to_string_lossy().to_string(),
             is_dir,
             size,
+            size_complete,
         });
     }
 
@@ -152,4 +215,3 @@ pub fn list_directory(path: &str) -> Result<Vec<FileEntry>, String> {
 
     Ok(entries)
 }
-

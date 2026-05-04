@@ -1,73 +1,33 @@
-# React + TypeScript + Vite
+# SpaceRingScene
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+SpaceRingScene is a retro-styled 3D desktop file navigator built with React, Three.js, and Tauri. It renders files and folders as physical objects in a low-poly scene with pixelation, ordered Bayer dithering, and moody post-processing.
 
-Currently, two official plugins are available:
+## Commands
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm run tauri:dev      # Run the Tauri desktop app in development mode
+npm run build          # Build the frontend
+npm run tauri:build    # Build the full desktop app and bundles
+npm run lint           # Run ESLint
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Navigation
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+- Double-click a folder object to navigate into it.
+- Press `Escape` or `Backspace` to go back.
+- Shift-click a folder object to open that folder in the system file manager.
+- Drag objects to move them around the scene.
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+Folder size labels are computed recursively within a short UI budget. If a folder is too large to scan immediately, the label is shown as a lower bound, for example `>4.2 GB`, or `large` when no reliable partial size was collected.
+
+## Architecture
+
+- `src/App.tsx` - Main app shell, settings state, and Tauri command integration.
+- `src/components/RetroScene.tsx` - React bridge for the Three.js runtime.
+- `src/components/retroScene/` - Scene runtime, navigation, interaction, spawning, resizing, rendering pipeline, labels, and formatting.
+- `src-tauri/src/scanner.rs` - Disk and directory scanning.
+- `src-tauri/src/lib.rs` - Tauri commands for settings, screenshots, directory listing, and opening folders.
+
+## Legacy
+
+`archive/index.html` contains the original single-file HTML prototype.

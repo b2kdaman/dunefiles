@@ -6,6 +6,7 @@ export type FileEntry = {
   path: string;
   is_dir: boolean;
   size: number;
+  size_complete?: boolean;
 };
 
 // History entry includes path, entries, and camera/scene state

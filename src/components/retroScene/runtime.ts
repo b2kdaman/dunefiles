@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { invoke } from "@tauri-apps/api/core";
 import { BLOOM_LAYER } from "./constants";
 import { createLoadingOverlay, createFpsCounter } from "./dom";
 import { createSceneContext } from "./createSceneContext";
@@ -141,6 +142,13 @@ export function createSceneRuntime({
     scaleAnimsRef: mutableState.scaleAnimsRef,
     particlesRef: mutableState.particlesRef,
     onNavigateIntoFolder: navigation.navigateIntoFolder,
+    onOpenFolder: async (path) => {
+      try {
+        await invoke("open_folder", { path });
+      } catch (err) {
+        console.error("Failed to open folder:", err);
+      }
+    },
     onNavigateBack: navigation.navigateBack,
     isFlightModeActive,
     BLOOM_LAYER,

@@ -4,7 +4,7 @@ import { CSS2DObject } from "three/examples/jsm/renderers/CSS2DRenderer.js";
 import type { SceneObject } from "../../animations/types";
 import type { FileEntry } from "../../store/sceneStore";
 import { createLabel } from "./labels";
-import { formatSize } from "./format";
+import { formatEntrySize } from "./format";
 import { createThickEdges } from "./geometry";
 import { diskSizeToScale, sizeToScale } from "./sizing";
 import { DIAMOND_RADIUS, SPHERE_RADIUS } from "./constants";
@@ -79,7 +79,7 @@ export function createSpawnFactory({ scene, world, defaultMaterial, sceneObjects
   // Create folder (sphere) helper
   function createFolder(entry: FileEntry, position: THREE.Vector3, velocity: THREE.Vector3, maxSize: number): SceneObject {
     const scale = sizeToScale(entry.size, maxSize);
-    const sizeStr = formatSize(entry.size);
+    const sizeStr = formatEntrySize(entry);
     const geo = new THREE.SphereGeometry(SPHERE_RADIUS, 24, 16);
     const mesh = new THREE.Mesh(
       geo,
@@ -156,7 +156,7 @@ export function createSpawnFactory({ scene, world, defaultMaterial, sceneObjects
         emissiveIntensity: 0.42,
       })
     );
-    const sizeStr = formatSize(entry.size);
+    const sizeStr = formatEntrySize(entry);
     mesh.castShadow = true;
     mesh.scale.set(0.7 * scale, 1 * scale, 0.7 * scale);
     mesh.userData = {

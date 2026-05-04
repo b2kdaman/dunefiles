@@ -4,6 +4,7 @@ use scanner::{DiskInfo, FileEntry};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
@@ -67,6 +68,44 @@ fn list_directory(path: String) -> Result<Vec<FileEntry>, String> {
 }
 
 #[tauri::command]
+fn open_folder(path: String) -> Result<(), String> {
+    let folder_path = PathBuf::from(&path);
+
+    if !folder_path.exists() {
+        return Err(format!("Path does not exist: {}", path));
+    }
+
+    if !folder_path.is_dir() {
+        return Err(format!("Path is not a folder: {}", path));
+    }
+
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = Command::new("open");
+        command.arg(&folder_path);
+        command
+    };
+
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = Command::new("explorer");
+        command.arg(&folder_path);
+        command
+    };
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = {
+        let mut command = Command::new("xdg-open");
+        command.arg(&folder_path);
+        command
+    };
+
+    command.spawn().map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
 fn save_screenshot(png_base64: String) -> Result<String, String> {
     let Some(pictures_dir) = dirs::picture_dir() else {
         return Err("Could not determine pictures directory".into());
@@ -83,11 +122,8 @@ fn save_screenshot(png_base64: String) -> Result<String, String> {
     let filename = format!("screenshot_{}.png", timestamp);
     let path = screenshots_dir.join(&filename);
 
-    let data = base64::Engine::decode(
-        &base64::engine::general_purpose::STANDARD,
-        &png_base64,
-    )
-    .map_err(|e| e.to_string())?;
+    let data = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &png_base64)
+        .map_err(|e| e.to_string())?;
 
     fs::write(&path, data).map_err(|e| e.to_string())?;
 
@@ -103,7 +139,8 @@ pub fn run() {
             save_settings,
             save_screenshot,
             get_disks,
-            list_directory
+            list_directory,
+            open_folder
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

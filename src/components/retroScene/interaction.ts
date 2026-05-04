@@ -16,6 +16,7 @@ type InteractionOptions = {
   scaleAnimsRef: ScaleAnimRef;
   particlesRef: ParticleRef;
   onNavigateIntoFolder: (path: string) => void | Promise<void>;
+  onOpenFolder: (path: string) => void | Promise<void>;
   onNavigateBack: () => void;
   isFlightModeActive: () => boolean;
   BLOOM_LAYER: number;
@@ -41,6 +42,7 @@ export function registerInteractionHandlers({
   scaleAnimsRef,
   particlesRef,
   onNavigateIntoFolder,
+  onOpenFolder,
   onNavigateBack,
   isFlightModeActive,
   BLOOM_LAYER,
@@ -72,6 +74,12 @@ export function registerInteractionHandlers({
     if (intersects.length > 0) {
       const hitMesh = intersects[0].object;
       const hitObj = sceneObjects.find(o => o.mesh === hitMesh);
+
+      if (hitObj && !hitObj.isExiting && hitObj.isDir && event.shiftKey) {
+        event.preventDefault();
+        void onOpenFolder(hitObj.filePath);
+        return;
+      }
 
       if (hitObj && !hitObj.isExiting && !hitObj.isDisk) {
         const scaleAnims = scaleAnimsRef.current;
@@ -108,6 +116,8 @@ export function registerInteractionHandlers({
 
   function onDoubleClick(event: MouseEvent) {
     if (isFlightModeActive()) return;
+    if (event.shiftKey) return;
+
     mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
     mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
 
